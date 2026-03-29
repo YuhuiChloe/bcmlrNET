@@ -8,13 +8,13 @@ library(ergm)
 library(network)
 
 T_len <- 600          # number of time points
-n <- 27            # number of nodes
+n <- 22           # number of nodes
 K <- 3                # number of blocks
 cp <- c(100, 500)     # changepoints
 
 # Fixed block memberships
-# Example: 15 nodes in block 1, 15 in block 2, 10 in block 3
-z <- c(rep(1, 9), rep(2, 9), rep(3, 9))
+# 7 nodes in block 1, 7 in block 2, 8 in block 3
+z <- c(rep(1, 7), rep(2, 7), rep(3, 8))
 
 B1 <- matrix(c(
   0.25, 0.05, 0.03,
