@@ -157,7 +157,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
   #===============================#
   # Q = matrix(0, nrow = Tt, ncol = K) # Frobenius inner products
   tau_sq = rigamma(n = 1, a = a_tau, b = b_tau) # inverse gamma variable
-  Lambda = matrix(1, nrow = K, ncol = D) # Impose sparsity on the latent variables
+  Lambda = matrix(0, nrow = K, ncol = D) # Impose sparsity on the latent variables
   Z = matrix(rbinom(n = n*K, size = 1, prob = 0.5), nrow = n, ncol = K) # Bernoulli variables
   U = array(0, dim = c(K, n, D)) # latent variables
   for (i in 1:n){
