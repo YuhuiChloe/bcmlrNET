@@ -1,42 +1,9 @@
-# --------------------------------------------------
-# Simulate a series of adjacency matrices from a
-# piecewise SBM with changepoints at 100 and 500,
-# and compute edges / triangles / isolates using ergm
-# --------------------------------------------------
-set.seed(123)
+
 library(ergm)
 library(network)
-
-T_len <- 600          # number of time points
-n <- 22           # number of nodes
-K <- 3                # number of blocks
-cp <- c(100, 500)     # changepoints
-
-# Fixed block memberships
-# 7 nodes in block 1, 7 in block 2, 8 in block 3
-z <- c(rep(1, 7), rep(2, 7), rep(3, 8))
-
-B1 <- matrix(c(
-  0.25, 0.05, 0.03,
-  0.05, 0.20, 0.04,
-  0.03, 0.04, 0.15
-), nrow = K, byrow = TRUE)
-
-B2 <- matrix(c(
-  0.25, 0.05, 0.03,
-  0.10, 0.40, 0.08,
-  0.03, 0.04, 0.15
-), nrow = K, byrow = TRUE)
-
-B3 <- matrix(c(
-  0.30, 0.02, 0.01,
-  0.02, 0.12, 0.06,
-  0.01, 0.06, 0.25
-), nrow = K, byrow = TRUE)
-
-# ---------------------------
-# 2. Function to simulate one SBM adjacency matrix
-# ---------------------------
+# ---------------------------#
+# A function to simulate one SBM adjacency matrix ####
+# ---------------------------#
 simulate_sbm <- function(n, z, B) {
   A <- matrix(0, n, n)
   for (i in 1:(n - 1)) {
@@ -49,9 +16,9 @@ simulate_sbm <- function(n, z, B) {
   diag(A) <- 0
   return(A)
 }
-# ---------------------------
-# 3. Function to compute summary statistics using ergm
-# ---------------------------
+# --------------------------- #
+# A function to compute summary statistics using ergm ####
+# ---------------------------#
 compute_ergm_stats <- function(A) {
   # Convert adjacency matrix to network object
   g <- network(A, directed = FALSE, matrix.type = "adjacency")
@@ -64,40 +31,75 @@ compute_ergm_stats <- function(A) {
     isolates = unname(s["isolates"])
   )
 }
-# ---------------------------
-# 4. Simulate the time series
-# ---------------------------
-A_list <- vector("list", T_len)
-stats_mat <- matrix(NA, nrow = T_len, ncol = 3)
-colnames(stats_mat) <- c("edges", "triangles", "isolates")
 
-for (t in 1:T_len) {
-  # Choose the SBM matrix according to segment
-  if (1<= t && t<= cp[1]) {
-    B <- B1
-  } else if (cp[1] < t  && t<= cp[2]) {
-    B <- B2
-  } else {
-    B <- B3
+#-------------------------------------------#
+# A function to return an adjacency matrix ####
+# and a matrix of summary statistics
+#-------------------------------------------#
+sim_sbm_2cps <- function(num_obs, num_node, cps){
+  T_len <- num_obs # number of time points
+  n <- num_node # number of nodes
+  K <- length(cps) + 1 # number of blocks/classes 
+  
+  # Fixed block memberships
+  # Example: 5 nodes in block 1, 5 in block 2, 5 in block 3
+  z <- c(rep(1, 5), rep(2, 5), rep(3, 5))
+  
+  # Segment-specific SBM connection probability matrices
+  B1 <- matrix(c(
+    0.50, 0.05, 0.10,
+    0.05, 0.50, 0.04,
+    0.10, 0.04, 0.50
+  ), nrow = K, byrow = TRUE)
+  
+  B2 <- matrix(c(
+    0.40, 0.07, 0.03,
+    0.07, 0.40, 0.00,
+    0.03, 0.00, 0.40
+  ), nrow = K, byrow = TRUE)
+  
+  # B3 is the same as B1
+  B3 <- matrix(c(
+    0.50, 0.05, 0.10,
+    0.05, 0.50, 0.04,
+    0.10, 0.04, 0.50
+  ), nrow = K, byrow = TRUE)
+  
+  # ---------------------------#
+  # 4. Simulate the time series
+  # ---------------------------#
+  A_list <- vector("list", T_len)
+  stats_mat <- matrix(NA, nrow = T_len, ncol = 3)
+  colnames(stats_mat) <- c("edges", "triangles", "isolates")
+  for (t in 1:T_len) {
+    # Choose the SBM matrix according to segment
+    if (1<= t && t<= cp[1]) {
+      B <- B1
+    } else if (cp[1] < t  && t<= cp[2]) {
+      B <- B2
+    } else {
+      B <- B3
+    }
+    # Simulate adjacency matrix
+    A_t <- simulate_sbm(n, z, B)
+    A_list[[t]] <- A_t
+    # Compute ergm-based summaries
+    stats_mat[t, ] <- compute_ergm_stats(A_t)
   }
-  # Simulate adjacency matrix
-  A_t <- simulate_sbm(n, z, B)
-  A_list[[t]] <- A_t
-  # Compute ergm-based summaries
-  stats_mat[t, ] <- compute_ergm_stats(A_t)
+  # Make the list of adjacency matrices as a 3D array
+  A_array <- array(unlist(A_list), dim = c(length(A_list), n, n))
+  is.array(A_array)
+  
+  return(out = list(A = A_array, S = stats_mat))
 }
 
-head(stats_mat)
-dim(stats_mat)
-length(A_list)
+data = sim_sbm_2cps(num_obs = 300, num_node = 15, cps = c(50,250))
+A_array = data$A
+stats_mat = data$S
 
-# Make the list of adjacency matrices as a 3D array
-A_array <- array(unlist(A_list), dim = c(length(A_list), n, n))
-is.array(A_array)
-
-#================#
-# Plot the data  #
-#================#
+#==========#
+# Plots ####
+#==========#
 par(mfrow = c(3,1))
 for (d in 1:3){
   plot(stats_mat[,d])
