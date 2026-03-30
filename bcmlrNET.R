@@ -9,7 +9,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
   Tt_all = dim(A)[1]  # total number of observations
   D = latent_dim # dimensions of latent variables per node 
   #===============#
-  # Sanity checks #
+  # Sanity checks ####
   #===============#
   if (dim(A)[1] != dim(S)[1]){
     stop("The series of adjacency matrices (A) and summary statistics (S) must have the same length. ")
@@ -21,7 +21,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
     stop("The number of latent variables (D) cannot exceed the number of nodes (n).")
   }
   #=================#
-  # Data processing #
+  # Data processing ####
   #=================#
   # A function to center & standardize a matrix x
   center_standardize <- function(x, m, sdv){
@@ -86,7 +86,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
   K = num_CP + 1 # number of classes
   L = num_CP # number of changepoints
   #===================#
-  # Utility functions #
+  # Utility functions ####
   #===================#
   # https://arxiv.org/pdf/2205.04997
   # https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
@@ -107,7 +107,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
     return(Y)
   }
   #=======================#
-  # Create an output list #
+  # Create an output list ####
   #=======================#
   out = list()
   out$tau_sq = rep(0, num_iter)
@@ -133,7 +133,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
     out$AUC = NULL
   }
   #============================#
-  # hyperparameters for priors #
+  # hyperparameters for priors ####
   #============================#
   # Prior quantities for beta (coefficients of summary statistics):
   m0 <- array(data=0, dim=c(p,K-1)) # m0[,k] is the prior mean of the kth coef vec
@@ -153,7 +153,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
   # prior for pi (Dirichlet)
   eta_dir = 2 # must be >1
   #===============================#
-  # Initialize working quantities #
+  # Initialize working quantities ####
   #===============================#
   # Q = matrix(0, nrow = Tt, ncol = K) # Frobenius inner products
   tau_sq = rigamma(n = 1, a = a_tau, b = b_tau) # inverse gamma variable
@@ -177,16 +177,16 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
     if(num_CP==1){
       kappa = round(Tt/2)
     }else if (num_CP>1){
-        kappa = rep(0, L)
-        for (l in 1:L){
-          kappa[l] = round(Tt/K) *l
-        }
+      kappa = rep(0, L)
+      for (l in 1:L){
+        kappa[l] = round(Tt/K) *l
       }
+    }
   }
   original_kappa = train_idx[kappa]
-  #======================#
-  # Begin Gibbs sampling #
-  #======================#
+  #=================================#
+  # Begin Gibbs sampling (iter)  ####
+  #=================================#
   if (print_progress){
     pb = txtProgressBar(min = 0, max = num_iter, style = 3)
   }
@@ -202,13 +202,14 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
     # Update Q_tk per iteration
     Q_iter = matrix(0, nrow = Tt, ncol = K)
     # update quantities in class k
+    # Begin for-loop of k = 1, ..., (K-1) ####
     for (k in 1:(K-1)){
       #============================#
       # After each parameter in class k is updated (in each iteration of k), 
       # get the latest phi_{tk}, c_{tk} and eta_{tk} based on all classes.
       #============================#
       #=============#
-      # Compute phi #
+      # Compute phi ####
       #=============#
       phi = matrix(0, nrow = Tt, ncol = K)
       for (kk in 1:(K-1)){
@@ -227,10 +228,10 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
           # phi is T * K with the Kth column = 0.  
           phi[t,kk] = Q_t_kk + StBkk
         }
-      }# End for-loop of kk = 1, ..., (K-1)
+      }# End for-loop of kk = 1, ..., (K-1) 
       # Now, we have phi. 
       #===========================#
-      # Compute c_{k} and eta_{k} #
+      # Compute c_{k} and eta_{k} ####
       #===========================#
       if(num_CP ==1){
         c_k = rep(0, Tt)
@@ -239,18 +240,19 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
       }
       eta_k = phi[,k] - c_k
       #============================#
-      # Update PG variables, omega
+      # Update PG variables, omega ####
       #============================#
       for (t in 1:Tt){
         omega[t,k] <- rpg(num=1, h = 1, z = eta_k[t]) # update omega
       }
       # (The current loop is for class k.)
       #===============================================#
-      # Update z_{ik}, u_{ik}, w_{ik} for each node i #
+      # Update z_{ik}, u_{ik}, w_{ik} for each node i ####
       #===============================================#
+      # Begin for-loop of i = 1, ...n ####
       for (i in 1:n){
         #====================# 
-        # Compute H_ik, g_ik #
+        # Compute H_ik, g_ik ####
         #====================#
         # Not as interesting as the fitted values phi_{tk}. 
         # So, we don't need to track their MCMC samples. 
@@ -269,7 +271,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
         } # End for-loop of t = 1, ..., Tt
         # Two working quantities, H_ik, g_ik, are updated. 
         #============================================# 
-        # Compute M_ik and related working quantities#
+        # Compute M_ik and related working quantities####
         #============================================#
         M_ik = H_ik + diag(D)*(1/tau_sq)
         # https://math.stackexchange.com/questions/3158303/using-cholesky-decomposition-to-compute-covariance-matrix-determinant
@@ -283,7 +285,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
         Minv_g = backsolve(Uchol_M, forwardsolve(t(Uchol_M), g_ik)) # (U^{\top}U)^{-1} g
         g_Minv_g = t(g_ik) %*% Minv_g # g^{\top} (U^{\top}U)^{-1} g 
         #=========================# 
-        # Update Z_ik (Bernoulli) #
+        # Update Z_ik (Bernoulli) ####
         #=========================#
         # Now we can compute logW_0 and logW_1 
         # (where we omitted a term that will be cancelled out in the posterior probabilities of z_ik)
@@ -298,7 +300,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
         # prob_z1 = W1_shift / (W0_shift + W1_shift)
         Z[i,k] = rbinom(1, size = 1, prob = prob_z1)
         #===================# 
-        # Update u_ik (D*1) #
+        # Update u_ik (D*1) ####
         #===================#
         if (Z[i,k] == 0){
           U[k,i,] = rep(0,D)
@@ -309,12 +311,12 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
           U[k,i,] = m_ik + backsolve(Uchol_M, stdGaussians) 
         }
         #======================# 
-        # Update w_ik (scalar) #
+        # Update w_ik (scalar) ####
         #======================#
         W[i,k] = rbeta(1, a_w + 1 - Z[i, k], b_w + Z[i, k])
-      }# End for-loop of i = 1, ...n
+      }# End for-loop of i = 1, ...n ####
       #=======================# 
-      # Update Lambda_k (D*D) #
+      # Update Lambda_k (D*D) ####
       #=======================#
       # Need to recompute Q_tk because, in the current iteration, 
       # it appeared in the local for-loop for computing H_ik and g_ik 
@@ -358,19 +360,20 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
       Lambda[k,] = Lambda_k
       # Done updating lambda_dk for each d (k is still fixed in the current iteration)
       #=====================# 
-      # Update beta_k (p*1) #
+      # Update beta_k (p*1) ####
       #=====================#
       normals = matrix(rnorm(p), p, 1) # A p-vector of standard normals
       precision_beta = as.numeric(crossprod(x = S, y = diag(omega[,k]) %*% S)) + V0inv[,,k]
       Uchol_beta = chol(precision_beta) # Upper Cholesky factor
       # crossprod(S, delta[, k] + omega[,k] * (c_k - Q_k)) + V0inv[,,k] %*% m0[, k]
       Beta[,k] = chol2inv(Uchol_beta) %*% 
-                (t(S) %*% (delta[,k] + diag(omega[,k]) %*% (c_k - Q_k)) + V0inv[,,k] %*% m0[, k]) 
-                + backsolve(Uchol_beta, normals)
+        (t(S) %*% (delta[,k] + diag(omega[,k]) %*% (c_k - Q_k)) + V0inv[,,k] %*% m0[, k]) 
+      + backsolve(Uchol_beta, normals)
       # Save FINAL Q_tk for this class after U and Lambda updates
       Q_iter[, k] = Q_k
+    } # End of for loop for k = 1, ..., (K-1) ####
       #=======================================# 
-      # Update pi (shared across all classes) #
+      # Update pi (shared across all classes) ####
       #=======================================#
       # accumulate the numbers of lambda's = -1, 0, or 1 over all classes
       n_neg1 = 0
@@ -390,7 +393,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
       gamma_draw = rgamma(3, shape = alpha_pi, rate = 1)
       pi = gamma_draw / sum(gamma_draw)
       #===========================================# 
-      # Update tau_sq (shared across all classes) #
+      # Update tau_sq (shared across all classes) ####
       #===========================================#
       sum_m_k = 0
       sum_ss_k = 0
@@ -405,11 +408,11 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
       }
       #tau_sq = 1/rgamma(n=1, shape = a_tau + (D/2) *sum_m_k, rate =b_tau + 0.5*sum_ss_k)
       tau_sq = rigamma(n = 1, a = a_tau + (D/2) *sum_m_k, b = b_tau + 0.5*sum_ss_k) 
-    }# End for-loop of k = 1, ..., (K-1)
-    # Done updating all other the parameters except the changepoints
+    #} 
+    # Done updating all other parameters except the changepoints
     
     #=============================#
-    # Update kappa (changepoints) # 
+    # Update kappa (changepoints) ####
     #=============================#
     if (num_CP == 1){
       Phi_exp <- exp(phi[,1]) 
@@ -435,7 +438,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
         kappa = sample(x=range, size=1, prob=prob_vec)
       }
       #=============================================#
-      # Select num of CPs: Is there a changepoint ? #
+      # Select num of CPs: Is there a changepoint ? ####
       #=============================================#
       original_kappa = train_idx[kappa]
       # 4. Compute AUC
@@ -443,7 +446,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
         Y_all = c(rep(0, times = original_kappa), rep(1, times = Tt_all - original_kappa))
         Y_auc = Y_all[holdout_idx]
         #=============#
-        # Compute phi #
+        # Compute phi ####
         #=============#
         phi_all = matrix(0, nrow = Tt_all, ncol = K)
         for (kk in 1:(K-1)){
@@ -470,162 +473,162 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
         ci = as.numeric(suppressWarnings(ci.auc(as.factor(Y_auc), as.numeric(P_auc), conf.level= 1-alpha_f, quiet = TRUE)))
       }
     }else if(num_CP > 1){
-    # Create the P matrix
-    Phi_exp <- exp(phi) # Tt * K
-    P <- t(apply(Phi_exp, 1, function(x) x/sum(x))) # Normalize the rows of Phi_exp to get P
-    if (is.character(prior_kappa) && prior_kappa == "default"){
-      for(j in 1:(K-1)){
-        # Now calculate the range of values that kappa[j] can take under its full
-        # conditional distribution and the vector prob_vec, which is defined
-        # such that prob_vec[k] is the log of the conditional probability that
-        # kappa[j] = range[k] given all the other data and parameters.
-        if(j==1){
-          #range <- 1:(kappa[j+1]-1)
-          range <- (1 + min_size):(kappa[j+1] - 1 - min_size)
-          lr <- length(range)
-          log_prob_vec_prop <- rep(0, lr)
-          for(l in 1:lr){
-            log_prob_vec_prop[l] <- sum(log(P[1:range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1]))
-            - length(1:range[l])*log(length(1:range[l]))
-            - length((range[l]+1):kappa[j+1])*log(length((range[l]+1):kappa[j+1]))
+      # Create the P matrix
+      Phi_exp <- exp(phi) # Tt * K
+      P <- t(apply(Phi_exp, 1, function(x) x/sum(x))) # Normalize the rows of Phi_exp to get P
+      if (is.character(prior_kappa) && prior_kappa == "default"){
+        for(j in 1:(K-1)){
+          # Now calculate the range of values that kappa[j] can take under its full
+          # conditional distribution and the vector prob_vec, which is defined
+          # such that prob_vec[k] is the log of the conditional probability that
+          # kappa[j] = range[k] given all the other data and parameters.
+          if(j==1){
+            #range <- 1:(kappa[j+1]-1)
+            range <- (1 + min_size):(kappa[j+1] - 1 - min_size)
+            lr <- length(range)
+            log_prob_vec_prop <- rep(0, lr)
+            for(l in 1:lr){
+              log_prob_vec_prop[l] <- sum(log(P[1:range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1]))
+              - length(1:range[l])*log(length(1:range[l]))
+              - length((range[l]+1):kappa[j+1])*log(length((range[l]+1):kappa[j+1]))
+            }
+            #prob_vec <- exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
+            prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
+          } else if(j==L){
+            #range <- (kappa[j-1]+1):(Tt-1)
+            range <- (kappa[j-1]+1 + min_size):(Tt - 1 - min_size)
+            lr <- length(range)
+            log_prob_vec_prop <- rep(0, lr)
+            for(l in 1:lr){
+              log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):Tt,j+1]))
+              - length((kappa[j-1]+1):range[l])*log(length((kappa[j-1]+1):range[l]))
+              - length((range[l]+1):Tt)*log(length((range[l]+1):Tt))
+            }
+            #prob_vec <- exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
+            prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
+          } else{
+            #range <- (kappa[j-1]+1):(kappa[j+1]-1)
+            range <- (kappa[j-1]+1 + min_size):(kappa[j+1]-1 - min_size)
+            lr <- length(range)
+            log_prob_vec_prop <- rep(0, lr)
+            for(l in 1:lr){
+              log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1]))
+              - length((kappa[j-1]+1):range[l])*log(length((kappa[j-1]+1):range[l]))
+              - length((range[l]+1):kappa[j+1])*log(length((range[l]+1):kappa[j+1]))
+            }
+            #prob_vec <- exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
+            prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
           }
-          #prob_vec <- exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
-          prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
-        } else if(j==L){
-          #range <- (kappa[j-1]+1):(Tt-1)
-          range <- (kappa[j-1]+1 + min_size):(Tt - 1 - min_size)
-          lr <- length(range)
-          log_prob_vec_prop <- rep(0, lr)
-          for(l in 1:lr){
-            log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):Tt,j+1]))
-            - length((kappa[j-1]+1):range[l])*log(length((kappa[j-1]+1):range[l]))
-            - length((range[l]+1):Tt)*log(length((range[l]+1):Tt))
+          if(lr > 1){
+            kappa[j] <- sample(x=range, size=1, prob=prob_vec) # update kappa
           }
-          #prob_vec <- exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
-          prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
-        } else{
-          #range <- (kappa[j-1]+1):(kappa[j+1]-1)
-          range <- (kappa[j-1]+1 + min_size):(kappa[j+1]-1 - min_size)
-          lr <- length(range)
-          log_prob_vec_prop <- rep(0, lr)
-          for(l in 1:lr){
-            log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1]))
-            - length((kappa[j-1]+1):range[l])*log(length((kappa[j-1]+1):range[l]))
-            - length((range[l]+1):kappa[j+1])*log(length((range[l]+1):kappa[j+1]))
+        }
+      }# End of the case when we use default prior for kappa (based on segment lengths) as in the paper.
+      else if (is.function(prior_kappa)){ # else if the user have a joint PMF for the kappas 
+        jt_pmf_kappa = prior_kappa(kappa) # Get joint PMF of the prior distribution of kappa
+        for(j in 1:(K-1)){
+          if(j==1){
+            range <- (1 + min_size):(kappa[j+1] - 1 - min_size)
+            lr <- length(range)
+            log_prob_vec_prop <- rep(0, lr)
+            for(l in 1:lr){
+              log_prob_vec_prop[l] <- sum(log(P[1:range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) + log(jt_pmf_kappa)
+            }
+            prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
+          } else if(j==L){
+            range <- (kappa[j-1]+1 + min_size):(Tt - 1 - min_size)
+            lr <- length(range)
+            log_prob_vec_prop <- rep(0, lr)
+            for(l in 1:lr){
+              log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):Tt,j+1])) + log(jt_pmf_kappa)
+            }
+            prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
+          } else{
+            range <- (kappa[j-1]+1 + min_size):(kappa[j+1]-1 - min_size)
+            lr <- length(range)
+            log_prob_vec_prop <- rep(0, lr)
+            for(l in 1:lr){
+              log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) + log(jt_pmf_kappa)
+            }
+            prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
           }
-          #prob_vec <- exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
-          prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
-        }
-        if(lr > 1){
-          kappa[j] <- sample(x=range, size=1, prob=prob_vec) # update kappa
-        }
-      }
-    }# End of the case when we use default prior for kappa (based on segment lengths) as in the paper.
-    else if (is.function(prior_kappa)){ # else if the user have a joint PMF for the kappas 
-      jt_pmf_kappa = prior_kappa(kappa) # Get joint PMF of the prior distribution of kappa
-      for(j in 1:(K-1)){
-        if(j==1){
-          range <- (1 + min_size):(kappa[j+1] - 1 - min_size)
-          lr <- length(range)
-          log_prob_vec_prop <- rep(0, lr)
-          for(l in 1:lr){
-            log_prob_vec_prop[l] <- sum(log(P[1:range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) + log(jt_pmf_kappa)
+          if(lr > 1){
+            kappa[j] <- sample(x=range, size=1, prob=prob_vec) # update kappa
           }
-          prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
-        } else if(j==L){
-          range <- (kappa[j-1]+1 + min_size):(Tt - 1 - min_size)
-          lr <- length(range)
-          log_prob_vec_prop <- rep(0, lr)
-          for(l in 1:lr){
-            log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):Tt,j+1])) + log(jt_pmf_kappa)
+        }
+      } # End of the case if the user has a joint PMF of kappa
+      # Done updating the changepoints (kappas)
+      #============================================#
+      # Select the number of multiple changepoints: ####
+      # Which of the fitted changepoints correspond to true changeppints?  #
+      #============================================#
+      # Update kappa in the scale of the entire series
+      original_kappa = train_idx[kappa]
+      #=================================#
+      # Compute AUC for model selection ####
+      #=================================#
+      if (model_selection){
+        #=============#
+        # Compute phi ####
+        #=============#
+        phi_all = matrix(0, nrow = Tt_all, ncol = K) # Fitted values
+        for (kk in 1:(K-1)){
+          # We must use all observed matrices A_t,
+          # just like we use all vectors x_i in a non-network data set.
+          for (t in 1:Tt_all){
+            # A_t = A_all[t,,]
+            # the i_th row of R_tmp is r_{ti,kk}^{\top} (1*D)
+            R_t_kk_all = A_all[t,,] %*% U[kk,,] %*% diag(Lambda[kk,]) # n*n n*D D*D -> n*D
+            # Q_{tk} = 1/2 * tr(U_k^{\top} A_t U_k Lambda_k)
+            # * represents element-wise multiplication
+            # trace = sum(diag()), but here we have a diagonal matrix: sum will do.
+            Q_t_kk_all  = 0.5*sum(U[kk,,] * R_t_kk_all)
+            # inner product of summary statistics and coefficients
+            StBkk_all = as.numeric(crossprod(S_all[t,], Beta[,kk]))
+            # phi is T * K with the Kth column = 0.
+            phi_all[t,kk] = Q_t_kk_all + StBkk_all
           }
-          prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
-        } else{
-          range <- (kappa[j-1]+1 + min_size):(kappa[j+1]-1 - min_size)
-          lr <- length(range)
-          log_prob_vec_prop <- rep(0, lr)
-          for(l in 1:lr){
-            log_prob_vec_prop[l] <- sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) + log(jt_pmf_kappa)
+        }
+        # "ratios" are the probabilities of a subject belonging to
+        # class j+1 other than class j
+        Phi_exp_all = exp(phi_all) # Element-wise exponent of Phi matrix from supplement
+        P_all = t(apply(Phi_exp_all, 1, function(x) x/sum(x))) # Normalize the rows of Phi_exp to get P
+        Y_all = kappa_to_Y(original_kappa, Tt_all, L) # Y in Tt_all *K
+        ci = matrix(0, nrow = K-1, ncol = 3) # each row has a LB, point estimate, and UB
+        for (j in 1:(K-1)){
+          if(j == 1){
+            rg = 1:original_kappa[j+1]
+            lg = length(rg)
+            ratios = P_all[rg,j+1]/(P_all[rg,j] + P_all[rg,j+1])
+            Y_auc = Y_all[rg, j + 1]
+            idx_test = which(rg %in% holdout_idx)
+            P_auc = ratios[idx_test]
+            Y_auc = Y_auc[idx_test]
+            ci[j,] = as.numeric(suppressWarnings(ci.auc(as.factor(Y_auc), as.numeric(P_auc), conf.level= 1-alpha_f, quiet = TRUE)))
+          }else if (j == K-1){
+            rg = (original_kappa[j-1]+1):Tt_all
+            lg = length(rg)
+            ratios = P_all[rg,j+1]/(P_all[rg,j] + P_all[rg, j+1])
+            Y_auc = Y_all[rg, j + 1]
+            idx_test = which(rg %in% holdout_idx)
+            P_auc = ratios[idx_test]
+            Y_auc = Y_auc[idx_test]
+            ci[j,] = as.numeric(suppressWarnings(ci.auc(as.factor(Y_auc), as.numeric(P_auc), conf.level= 1-alpha_f, quiet = TRUE)))
+          }else{
+            rg = (original_kappa[j-1]+1):original_kappa[j+1]
+            lg = length(rg)
+            ratios = P_all[rg,j+1]/(P_all[rg,j] + P_all[rg, j+1])
+            Y_auc = Y_all[rg, j + 1]
+            idx_test = which(rg %in% holdout_idx)
+            P_auc = ratios[idx_test]
+            Y_auc = Y_auc[idx_test]
+            ci[j,] = as.numeric(suppressWarnings(ci.auc(as.factor(Y_auc), as.numeric(P_auc), conf.level= 1-alpha_f, quiet = TRUE)))
           }
-          prob_vec <- exp(log_prob_vec_prop - logsumexp(log_prob_vec_prop))
         }
-        if(lr > 1){
-          kappa[j] <- sample(x=range, size=1, prob=prob_vec) # update kappa
-        }
-      }
-    } # End of the case if the user has a joint PMF of kappa
-    # Done updating the changepoints (kappas)
-    #===================================#
-    # Select the number of changepoints: 
-    # Which of the fitted changepoints correspond to true changeppints?  #
-    #===================================#
-    # Update kappa in the scale of the entire series
-    original_kappa = train_idx[kappa]
-    #=================================#
-    # Compute AUC for model selection #
-    #=================================#
-    if (model_selection){
-      #=============#
-      # Compute phi #
-      #=============#
-      phi_all = matrix(0, nrow = Tt_all, ncol = K) # Fitted values
-      for (kk in 1:(K-1)){
-        # We must use all observed matrices A_t,
-        # just like we use all vectors x_i in a non-network data set.
-        for (t in 1:Tt_all){
-          # A_t = A_all[t,,]
-          # the i_th row of R_tmp is r_{ti,kk}^{\top} (1*D)
-          R_t_kk_all = A_all[t,,] %*% U[kk,,] %*% diag(Lambda[kk,]) # n*n n*D D*D -> n*D
-          # Q_{tk} = 1/2 * tr(U_k^{\top} A_t U_k Lambda_k)
-          # * represents element-wise multiplication
-          # trace = sum(diag()), but here we have a diagonal matrix: sum will do.
-          Q_t_kk_all  = 0.5*sum(U[kk,,] * R_t_kk_all)
-          # inner product of summary statistics and coefficients
-          StBkk_all = as.numeric(crossprod(S_all[t,], Beta[,kk]))
-          # phi is T * K with the Kth column = 0.
-          phi_all[t,kk] = Q_t_kk_all + StBkk_all
-        }
-      }
-      # "ratios" are the probabilities of a subject belonging to
-      # class j+1 other than class j
-      Phi_exp_all = exp(phi_all) # Element-wise exponent of Phi matrix from supplement
-      P_all = t(apply(Phi_exp_all, 1, function(x) x/sum(x))) # Normalize the rows of Phi_exp to get P
-      Y_all = kappa_to_Y(original_kappa, Tt_all, L) # Y in Tt_all *K
-      ci = matrix(0, nrow = K-1, ncol = 3) # each row has a LB, point estimate, and UB
-      for (j in 1:(K-1)){
-        if(j == 1){
-          rg = 1:original_kappa[j+1]
-          lg = length(rg)
-          ratios = P_all[rg,j+1]/(P_all[rg,j] + P_all[rg,j+1])
-          Y_auc = Y_all[rg, j + 1]
-          idx_test = which(rg %in% holdout_idx)
-          P_auc = ratios[idx_test]
-          Y_auc = Y_auc[idx_test]
-          ci[j,] = as.numeric(suppressWarnings(ci.auc(as.factor(Y_auc), as.numeric(P_auc), conf.level= 1-alpha_f, quiet = TRUE)))
-        }else if (j == K-1){
-          rg = (original_kappa[j-1]+1):Tt_all
-          lg = length(rg)
-          ratios = P_all[rg,j+1]/(P_all[rg,j] + P_all[rg, j+1])
-          Y_auc = Y_all[rg, j + 1]
-          idx_test = which(rg %in% holdout_idx)
-          P_auc = ratios[idx_test]
-          Y_auc = Y_auc[idx_test]
-          ci[j,] = as.numeric(suppressWarnings(ci.auc(as.factor(Y_auc), as.numeric(P_auc), conf.level= 1-alpha_f, quiet = TRUE)))
-        }else{
-          rg = (original_kappa[j-1]+1):original_kappa[j+1]
-          lg = length(rg)
-          ratios = P_all[rg,j+1]/(P_all[rg,j] + P_all[rg, j+1])
-          Y_auc = Y_all[rg, j + 1]
-          idx_test = which(rg %in% holdout_idx)
-          P_auc = ratios[idx_test]
-          Y_auc = Y_auc[idx_test]
-          ci[j,] = as.numeric(suppressWarnings(ci.auc(as.factor(Y_auc), as.numeric(P_auc), conf.level= 1-alpha_f, quiet = TRUE)))
-        }
-      }
-    } # End of selecting the number of changepoints given that num_CP >1
+      } # End of selecting the number of changepoints given that num_CP >1
     } # END of the case "num_CP > 1"
     #=================================#
-    # Store updates to the output list #
+    # Store updates to the output list ####
     #=================================#
     if ( iter > num_warmup){
       #out$Q[iter-num_warmup,,] = Q_iter
@@ -665,9 +668,9 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
   } # End of the Gibbs sampler (iter = 1, ..., num_iter)
   end = Sys.time()
   if (print_progress){ close(pb) }
-  #====================#
-  # End Gibbs sampling #
-  #====================#
+  #================================#
+  # END Gibbs sampling (iter)   ####
+  #================================#
   # out$runTime = end-start
   return(out)
 } 
