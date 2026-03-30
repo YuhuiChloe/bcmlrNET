@@ -110,7 +110,7 @@ bcmlrNET <- function(A, S, num_CP, latent_dim = 5, init = "even", prior_kappa = 
   # Create an output list ####
   #=======================#
   out = list()
-  out$tau_sq = rep(0, num_iter)
+  out$tau_sq = rep(0, num_iter-num_warmup)
   #out$Q = array(0, dim = c(num_iter-num_warmup, Tt, K))
   out$Lambda = array(0, dim = c(num_iter-num_warmup, K, D))
   out$U = array(0, dim = c(num_iter-num_warmup, K, n, D))
