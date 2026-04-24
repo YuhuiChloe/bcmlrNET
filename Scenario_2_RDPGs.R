@@ -11,6 +11,7 @@ sim_scenario2_rdpg <- function(
     cp = c(75, 225),
     alpha_x = rep(1, D0),
     delta_x = 0.12,
+    num_shift = 5, 
     seed = NULL
 ) {
   # --------------#
@@ -21,6 +22,7 @@ sim_scenario2_rdpg <- function(
   if (D0 < 2) stop("D0 must be at least 2.")
   if (length(alpha_x) != D0) stop("alpha_x must have length D0.")
   if (any(alpha_x <= 0)) stop("All entries of alpha_x must be positive.")
+  if (num_shift > n/2) stop("The number of nodes with shifts in latent dimensions cannot be larger than half of the total number of nodes.")
   if (delta_x <= 0 || delta_x >= 1) stop("delta_x must satisfy 0 < delta_x < 1.")
   if (cp[1] < 1 || cp[1] >= cp[2] || cp[2] >= Tt) {
     stop("Require 1 <= cp[1] < cp[2] < Tt.")
@@ -49,10 +51,10 @@ sim_scenario2_rdpg <- function(
   X_seg1 = X_base
   
   X_seg2 = X_base
-  for (i in 1:5) {
+  for (i in 1:num_shift) {
     X_seg2[i, ] = (1 - delta_x) * X_base[i, ] + delta_x * e1
   }
-  for (i in (n - 4):n) {
+  for (i in (n - num_shift +1):n) {
     X_seg2[i, ] = (1 - delta_x) * X_base[i, ] + delta_x * e2
   }
   
