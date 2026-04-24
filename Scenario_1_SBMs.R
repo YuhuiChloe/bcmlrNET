@@ -3,10 +3,15 @@
 # Stochastic block model with piecewise-constant memberships
 # and dyad-level temporal dependence
 # ============================================================#
-
-sim_scenario1_sbm <- function(n = 50, Tt = 300, C = 2, cp = c(75, 225), 
-                                   rho = 0.5, p_range = c(0.5, 1.0), 
-                                   q_range = c(0.0, 0.4), seed = NULL) {
+sim_scenario1_sbm <- function(n = 50, 
+                              Tt = 300, 
+                              C = 2, 
+                              cp = c(75, 225), 
+                              rho = 0.5, 
+                              p_range = c(0.5, 1.0), 
+                              q_range = c(0.0, 0.4), 
+                              num_swap = 5,
+                              seed = NULL) {
   # --------------#
   # Sanity checks #
   # --------------#
@@ -14,10 +19,12 @@ sim_scenario1_sbm <- function(n = 50, Tt = 300, C = 2, cp = c(75, 225),
   if (length(cp) != 2) stop("cp must be a length-2 vector.")
   if (C != 2) stop("This implementation assumes C = 2.")
   if (n %% 2 != 0) stop("n must be even for the default baseline split.")
+  if (num_swap >n/2) stop("The number of nodes swapping cannot be larger than half of the total number of nodes.")
   if (rho < 0 || rho >= 1) stop("rho must satisfy 0 <= rho < 1.")
   if (cp[1] < 1 || cp[1] >= cp[2] || cp[2] >= Tt) {
     stop("Require 1 <= cp[1] < cp[2] < Tt.")
   }
+  
   # ------------------------------#
   # Draw B once and keep it fixed #
   # ------------------------------#
@@ -27,6 +34,7 @@ sim_scenario1_sbm <- function(n = 50, Tt = 300, C = 2, cp = c(75, 225),
     p_in, q_out,
     q_out, p_in
   ), nrow = 2, byrow = TRUE)
+  
   # -----------------------------------------#
   # Build segment-specific membership vectors
   # Z^(1), Z^(2), Z^(3)
@@ -35,8 +43,8 @@ sim_scenario1_sbm <- function(n = 50, Tt = 300, C = 2, cp = c(75, 225),
   z1 = c(rep(1, n / 2), rep(2, n / 2)) 
   
   z2 = z1
-  z2[1:5] = 2 # the first 5 nodes move to community 2
-  z2[(n-4):n] = 1 # the last five nodes move to community 1
+  z2[1:num_swap] = 2 # the first num_swap nodes move to community 2
+  z2[(n - num_swap + 1):n] = 1 # the last num_swap nodes move to community 1
   
   z3 = z1 # all moving nodes move back to where they belong at the beginning
   
@@ -48,9 +56,11 @@ sim_scenario1_sbm <- function(n = 50, Tt = 300, C = 2, cp = c(75, 225),
     }
     return(Z)
   }
+  
   Z1 = membership_to_Z(z1, C)
   Z2 = membership_to_Z(z2, C)
   Z3 = membership_to_Z(z3, C)
+  
   # ------------------------------------------#
   # Segment-specific probability matrices P^(s)
   # ------------------------------------------#
@@ -61,6 +71,7 @@ sim_scenario1_sbm <- function(n = 50, Tt = 300, C = 2, cp = c(75, 225),
   diag(P1) = 0
   diag(P2) = 0
   diag(P3) = 0
+  
   # ---------------------------------------------------------#
   # Helper to pick P_t by segment
   # ---------------------------------------------------------#
