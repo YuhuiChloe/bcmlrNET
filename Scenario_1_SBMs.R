@@ -3,11 +3,12 @@
 # Stochastic block model with piecewise-constant memberships
 # and dyad-level temporal dependence
 # ============================================================#
+
 sim_scenario1_sbm <- function(n = 50, 
                               Tt = 300, 
                               C = 2, 
                               cp = c(75, 225), 
-                              rho = 0.5, 
+                              rho = 0.1, 
                               p_range = c(0.5, 1.0), 
                               q_range = c(0.0, 0.4), 
                               num_swap = 5,
@@ -24,7 +25,6 @@ sim_scenario1_sbm <- function(n = 50,
   if (cp[1] < 1 || cp[1] >= cp[2] || cp[2] >= Tt) {
     stop("Require 1 <= cp[1] < cp[2] < Tt.")
   }
-  
   # ------------------------------#
   # Draw B once and keep it fixed #
   # ------------------------------#
@@ -34,7 +34,6 @@ sim_scenario1_sbm <- function(n = 50,
     p_in, q_out,
     q_out, p_in
   ), nrow = 2, byrow = TRUE)
-  
   # -----------------------------------------#
   # Build segment-specific membership vectors
   # Z^(1), Z^(2), Z^(3)
@@ -44,8 +43,8 @@ sim_scenario1_sbm <- function(n = 50,
   
   z2 = z1
   z2[1:num_swap] = 2 # the first num_swap nodes move to community 2
-  z2[(n - num_swap + 1):n] = 1 # the last num_swap nodes move to community 1
-  
+  z2[(n-num_swap+1):n] = 1 # the last num_swap nodes move to community 1
+
   z3 = z1 # all moving nodes move back to where they belong at the beginning
   
   # construct membership matrices
@@ -56,7 +55,6 @@ sim_scenario1_sbm <- function(n = 50,
     }
     return(Z)
   }
-  
   Z1 = membership_to_Z(z1, C)
   Z2 = membership_to_Z(z2, C)
   Z3 = membership_to_Z(z3, C)
@@ -71,7 +69,6 @@ sim_scenario1_sbm <- function(n = 50,
   diag(P1) = 0
   diag(P2) = 0
   diag(P3) = 0
-  
   # ---------------------------------------------------------#
   # Helper to pick P_t by segment
   # ---------------------------------------------------------#
@@ -88,7 +85,6 @@ sim_scenario1_sbm <- function(n = 50,
   # ---------------------------------------------------------#
   # Simulate undirected adjacency matrices with dyad-level
   # Markov dependence:
-  #
   # A_{ij,1} ~ Bernoulli(p_ij^(1))
   # A_{ij,t+1} | A_{ij,t}
   # ---------------------------------------------------------#
@@ -129,6 +125,7 @@ sim_scenario1_sbm <- function(n = 50,
   return(list(
     A = A, 
     cp = cp,
+    swapped_nodes = c(1:num_swap,(n-num_swap+1):n),
     B = B,
     z = list(z1 = z1, z2 = z2, z3 = z3),
     Z = list(Z1 = Z1, Z2 = Z2, Z3 = Z3),
