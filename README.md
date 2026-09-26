@@ -1,218 +1,268 @@
-
 # bcmlrNET
 
-**Bayesian changepoint analysis for dynamic networks**
+**When did the network change, and what changed with it?**
 
-Identify when network structure changes, quantify uncertainty, and examine
-which network features are associated with the detected changes.
+`bcmlrNET` is R software for detecting and interpreting changepoints in dynamic
+networks. It analyzes a sequence of adjacency matrices, optionally together
+with network summary statistics, to identify changes in network structure
+and quantify uncertainty.
 
-`bcmlrNET` is research software for analyzing time-ordered networks using
-adjacency matrices and network summary statistics. Its application workflows
-connect changepoint inference with network-level coefficient summaries,
-dyad-level coefficient differences, and node-level involvement measured
-through row-wise L2 norms.
+A changepoint is only the beginning of the analysis. Posterior summaries help
+examine the network characteristics, connections between pairs of nodes, and
+individual nodes associated with each detected change.
 
-> **Development status:** The research implementation is being organized into
-> an R package for distribution through GitHub. Installation and the
-> package-qualified examples below describe the target package workflow;
-> they have not yet been validated against a packaged release.
+- **Detect changes:** Estimate changepoint locations conditional on a specified
+  number of changepoints, or use the procedure for selecting the number of
+  changepoints when it is unknown.
+- **Quantify uncertainty:** Examine uncertainty in the number and locations
+  of changepoints, together with posterior summaries of coefficient changes.
+- **Interpret changes:** Connect the detected changes to network statistics,
+  dyad-level coefficient differences, and node-level involvement.
 
-<!-- Add one representative application figure here after its image file
-has been committed. Add badges only for checks that actually exist. -->
+> **Status:** R package in development. The package-qualified examples below
+> describe the interface being prepared for GitHub distribution; installation
+> and end-to-end examples have not yet been validated in a packaged release.
 
-## What the software provides
+<!-- Add a representative figure here when its image file is committed. -->
 
-- **Changepoint inference:** Analyze a specified number of changepoints or
-  assess uncertainty in their number through the model-selection workflow.
-- **Interpretation at multiple levels:** Examine coefficients for network
-  statistics, coefficient differences for individual dyads, and posterior
-  summaries of node-level involvement.
-- **Application workflows:** Follow the analyses of Enron email communication
-  networks and POLECAT weekly conflict networks.
+## Installation
 
-## Planned GitHub installation
-
-Once the installable package is available in this repository, the installation
-command will be:
+Once the installable package is available, install it from GitHub with:
 
 ```r
 install.packages("remotes")
 remotes::install_github("YuhuiChloe/bcmlrNET")
 ```
 
-The examples use `bcmlrNET::function_name()` to identify package functions
-explicitly. These calls require an installed package with the corresponding
-functions exported.
-
-## Main interface
-
-The two intended entry points are:
-
-| Analysis | Entry point |
-| --- | --- |
-| Fit conditional on a specified number of changepoints | `bcmlrNET::bcmlrNET()` |
-| Analyze an unknown number of changepoints | `bcmlrNET::bcmlrNET_model_select()` |
-
-The example below follows the model-selection call in the Enron research
-script.
-
-<!-- Add a fixed-number example after verifying the bcmlrNET() signature. -->
+The implementation includes C++ code through `Rcpp` and `RcppArmadillo`.
+Building from source requires an R-compatible C++ toolchain.
 
 ## Input data
 
-The application workflow below supplies two aligned inputs:
+Let `A_list` be a list of `T` adjacency matrices in chronological order. Each
+matrix has dimensions `n x n` and represents a network on the same `n` nodes.
+The node ordering must be identical across all matrices.
 
-| Input | Representation |
-| --- | --- |
-| `A` | A list of adjacency matrices in chronological order, with a common node set and consistent node ordering. |
-| `S` | A numeric matrix or data frame with one row per network and one column per network statistic, in the same chronological order as `A`. |
+The current adjacency-matrix implementation requires symmetric matrices with
+zero diagonal entries and finite values: undirected networks without
+self-loops. The network-statistic example below uses binary, zero-one
+adjacency matrices.
 
-The Enron example uses binary, undirected networks without self-loops and the
-statistics `edges`, `triangles`, and `isolates`. Keep node labels in the same
-order as the rows and columns of every adjacency matrix. Keep weekly interval
-metadata in the same order as the network list.
+An optional input, `S`, is a numeric matrix with `T` rows and one column per
+network statistic. Row `t` of `S` must correspond to `A_list[[t]]`.
 
-## Model-selection workflow
-
-This example assumes that `A_list` already contains the prepared Enron
-network series. The settings are taken from the Enron application; they are
-not generic defaults or a short demonstration run. The data-preparation
-workflow must be completed before this example can be run.
+For example, compute the number of edges, triangles, and isolated nodes at
+each time point:
 
 ```r
 S <- bcmlrNET::compute_netstats(
   A_list,
   network_stats = c("edges", "triangles", "isolates")
 )
+```
 
-fit <- bcmlrNET::bcmlrNET_model_select(
+To analyze adjacency matrices without additional network statistics, pass
+`S = NULL` explicitly to either fitting function.
+
+## Fit the method
+
+The following calls assume that `A_list` contains your network sequence and
+that `S` has been constructed as above. The settings illustrate the interface;
+they are not universal tuning recommendations. The series must be long enough
+to accommodate the requested number of changepoints and minimum segment length.
+
+### A specified number of changepoints
+
+Use `bcmlrNET()` to fit conditional on a chosen number of changepoints. Here,
+`num_CP = 2` specifies two changepoints and three segments.
+
+```r
+fit_fixed <- bcmlrNET::bcmlrNET(
   A = A_list,
   S = S,
-  min_size = 6,
+  num_CP = 2,
+  min_size = 10,
   latent_dim = 10,
-  eta_dir = 1.01,
-  b_tau = 0.5,
-  thinning = 5,
-  prior_kappa = "default",
-  alpha_f = 0.05,
-  threshold = 0.5,
-  max_num_cp = 8,
-  sd_beta = 3,
-  num_iter = 10000,
-  num_warmup = 5000,
-  print_progress = TRUE,
-  print_outputs = FALSE,
   prior_for_U = "Spike_Slab",
-  lambda_init = "equal",
-  sparse_networks = FALSE,
-  center_std_A = TRUE,
+  num_iter = 5000,
+  num_warmup = 2500,
   seed = 2026
 )
 
-fit$Kappa_mode
+fit_fixed$Kappa_mode
+```
+
+`Kappa_mode` contains the point estimates (marginal posterior modes) of the
+changepoint locations, expressed as indices in the original network sequence.
+
+### An unknown number of changepoints
+
+Use `bcmlrNET_model_select()` when the number of changepoints is unknown.
+`max_num_cp` specifies the number initially fitted for the selection procedure,
+not the final number the method must return.
+
+```r
+fit <- bcmlrNET::bcmlrNET_model_select(
+  A = A_list,
+  S = S,
+  max_num_cp = 5,
+  min_size = 10,
+  latent_dim = 10,
+  prior_for_U = "Spike_Slab",
+  thinning = 5,
+  alpha_f = 0.05,
+  threshold = 0.5,
+  num_iter = 5000,
+  num_warmup = 2500,
+  seed = 2026
+)
+
+fit$num_cp
 fit$probs_num_cp
 ```
 
-The application scripts use the following result components:
+The procedure assesses whether networks on opposite sides of each fitted
+changepoint can be distinguished using held-out observations. Here,
+`thinning = 5` holds out every fifth observation for this assessment; it does
+not mean retaining every fifth MCMC sample.
 
-| Component | Use in the application workflow |
+The selected number of changepoints is the mode of the distribution of the
+number of fitted changepoints supported by the selection criterion. When this
+number is positive, the function automatically refits using the full network
+sequence. Changepoint locations and coefficient summaries from that refit are
+conditional on the selected number of changepoints, rather than averaged over
+different numbers of changepoints.
+
+If zero changepoints are selected, the function returns summaries of the
+number of changepoints without a refitted model. Location and coefficient plots
+should then be skipped.
+
+### Main results
+
+| Component | Contents |
 | --- | --- |
-| `Kappa_mode` | Report estimated changepoint locations and map them to observation weeks. |
-| `Kappa` | Supply changepoint samples to the location-uncertainty plots. |
-| `num_cp_dist` | Plot the distribution of the number of fitted changepoints that appear to correspond to true changepoints. |
-| `probs_num_cp` | Inspect the probabilities associated with different changepoint counts. |
-| `Beta` | Summarize coefficient differences for the network statistics. |
+| `num_cp` | Selected number of changepoints; returned by model selection. |
+| `probs_num_cp` | Probabilities for the number of changepoints, from zero to `max_num_cp`. |
+| `num_cp_dist` | Posterior samples of the number of fitted changepoints that appear to correspond to true changepoints. |
+| `Kappa_mode` | Point estimates (marginal posterior modes) of changepoint locations. |
+| `Kappa` | Posterior samples of changepoint locations. |
+| `Beta` | Posterior samples of coefficients for the network statistics. |
+| `U`, `Lambda` | Posterior samples used to construct dyad-level coefficient matrices. |
 
-With an aligned vector of weekly labels named `time_labels`, the reported
-locations can be displayed as:
+In model-selection output, `Kappa_mode`, `Kappa`, `Beta`, `U`, and `Lambda`
+are present only when the selected number of changepoints is positive.
+
+## Explore the detected changes
+
+Start with uncertainty in the number of changepoints:
 
 ```r
-time_labels[fit$Kappa_mode]
-```
-
-## From fitted results to figures
-
-The planned plotting interface preserves the research functions used in the
-application scripts:
-
-| Figure or summary | Research function |
-| --- | --- |
-| Network-statistic trajectories | `plot_netstats_paper()` |
-| Distribution of the number of changepoints | `plot_histogram()` |
-| Credible intervals for network-statistic coefficient differences | `plot_beta_diff_CIs()` |
-| Heatmaps of dyad-level coefficient differences | `plot_B_diff_heatmaps()` |
-| Node involvement through row-wise L2 norms | `plot_node_involvement_L2()` |
-| Network statistics with changepoint estimates and credible intervals | `plot_netstats_cp_cis()` |
-
-For example, the count-distribution plot will use:
-
-```r
-p_count <- bcmlrNET::plot_histogram(
+p_num_cp <- bcmlrNET::plot_histogram(
   num_vec = fit$num_cp_dist,
-  max_num = 8,
-  y_max = 1,
+  max_num = 5,
   title = "Posterior distribution of the number of changepoints"
 )
-
-print(p_count)
+print(p_num_cp)
 ```
 
-Here, the plotted count is the number of fitted changepoints that appear to
-correspond to true changepoints under the selection procedure. It should not
-be confused with the initial number supplied through `max_num_cp`.
+Here, the distribution summarizes the number of fitted changepoints that
+appear to correspond to true changepoints.
 
-The node-level plots summarize row-wise L2 norms of coefficient differences.
-Nonzero posterior median coefficient differences are not, by themselves,
-statements of statistical significance or causal effects.
+Next, examine changes in the coefficients of the network statistics. This plot
+shows posterior means and 95% credible intervals for differences between
+adjacent segments:
 
-## Applications and reproducibility
+```r
+if (fit$num_cp > 0) {
+  p_beta <- bcmlrNET::plot_beta_diff_CIs(
+    Beta = fit$Beta,
+    coef_labels = colnames(S),
+    mfrow = c(1, fit$num_cp),
+    ci_level = 0.95
+  )
+  print(p_beta)
+}
+```
 
-**Enron.** The research workflow prepares email communication networks,
-aggregates email aliases to person-level nodes, and examines changepoints
-alongside network-statistic, dyad-level, and node-level summaries.
+The visualization functions cover complementary aspects of the analysis:
 
-**POLECAT.** The research workflow reads a weekly network array, aligns it with
-node labels and a week-index map, and produces the corresponding changepoint
-and coefficient-summary figures.
-
-The package release is intended to distinguish two reproduction routes:
-
-| Route | Scope |
+| Question | Function |
 | --- | --- |
-| Full recomputation | Prepare the data, fit the models, and generate the figures. |
-| Figure regeneration | Load saved fitted results and recreate the figures without refitting. |
+| How do network statistics evolve over time? | `plot_netstats_paper()` |
+| How uncertain is the number of changepoints? | `plot_histogram()` |
+| Where are the changepoints, and how uncertain are their locations? | `plot_netstats_cp_cis()` |
+| Which network-statistic coefficients change? | `plot_beta_diff_CIs()` |
+| Which dyad-level coefficients change? | `plot_B_diff_heatmaps()` |
+| Which nodes have the largest row-wise coefficient changes? | `plot_node_involvement_L2()` |
 
-Figure regeneration is not a substitute for rerunning model fitting. The
-release documentation will identify the inputs and settings used for each
-route, including seeds, software versions, node ordering, weekly interval
-conventions, and output files. Availability of application datasets and saved
-results will be documented separately from package installation.
+Node involvement is summarized using row-wise L2 norms of differences
+between coefficient matrices, calculated for each posterior sample. These summaries
+characterize changes associated with nodes; they do not establish causation.
 
-## Development priorities
+## Applications
 
-- Package the model and reusable summaries with documented inputs and outputs.
-- Add a small runnable example, automated tests, and package checks.
-- Separate application preparation, model fitting, competitor comparisons,
-  and figure generation into reproducible workflows.
+### Enron: changes in email communication
+
+The [Enron email corpus](https://www.cs.cmu.edu/~enron/) contains email
+communications involving Enron employees. Our application uses the network
+data supplied by `igraphdata` to construct email communication networks over
+non-overlapping weekly intervals. Nodes represent unique employees (89 in total) after
+email aliases are combined, and edges represent email communication between
+them during the corresponding week.
+
+The analysis examines when communication patterns change and which employees
+and employee pairs are most involved in the detected changes.
+
+### POLECAT: changes in international conflict networks
+
+[POLECAT](https://andrewhalterman.com/publication/plover-polecat-new-event-data/)
+is a political event dataset constructed from international news reports and
+coded according to the PLOVER event ontology. Our application focuses on
+material-conflict events, including assaults, coercive actions, mobilizations,
+protests, and reductions in relations (including sanctions). Throughout this
+application, we refer to these material-conflict events as **conflicts**.
+
+The networks are constructed over non-overlapping weekly intervals. Nodes
+represent countries (197 in total), and edges represent reported conflicts between them
+during the corresponding week.
+
+The analysis examines when these conflict relations change and uses posterior
+summaries to characterize the countries and country pairs associated with
+the detected changes.
+
+## Reproduce an application
+
+Follow the analysis from its inputs to its figures:
+
+1. **Prepare the networks.** Construct the adjacency-matrix list and align its
+   node labels and weekly intervals.
+2. **Fit the method.** Compute the chosen network statistics and run the
+   fitting function with the application's settings and random seed.
+3. **Generate the figures.** Use the returned object to summarize changepoints
+   and visualize network-, dyad-, and node-level coefficient changes.
+
+For a reproducible run, use the same data version, preprocessing steps,
+software versions, and computational settings. Record the package release or
+commit, the random seed, and the R session information. A seed alone does not
+guarantee identical numerical results across different computing environments.
+
+Data-access instructions and executable end-to-end reproduction scripts are
+planned for the package release.
 
 ## Related work and attribution
 
-This project forms part of dissertation research on changepoint analysis.
-The related [bcmlr repository](https://github.com/YuhuiChloe/bcmlr) contains the
-companion research implementation.
+The companion [bcmlr project](https://github.com/YuhuiChloe/bcmlr) provides the
+related research implementation for multivariate series.
 
-The Enron preprocessing script credits the
+The Enron preprocessing builds on the
 [CPD_generative Enron workflow](https://github.com/allenkei/CPD_generative/blob/main/R_code/Enron/Enron.R).
-The research analyses use competing methods as comparison baselines, not as
-components of the `bcmlrNET` method.
+Source datasets and comparison methods should be credited separately from
+the `bcmlrNET` software.
 
-<!-- Before release: add the verified network-method manuscript citation,
-software citation, approved license, and data-source documentation.
-Do not infer the network paper's citation from the earlier bcmlr paper. -->
+<!-- Before release, add the verified method/software citations and approved
+license. Add links to application scripts only after they are committed. -->
 
-## Questions and reproducibility reports
+## Questions and issues
 
-When reporting an issue, include the command that failed, the error message,
-a minimal example where possible, and the output of `sessionInfo()`. Identify
-whether the issue arose during installation, model fitting, or figure
-generation.
+When reporting a problem, include a minimal example, the error message, the
+package version or commit, and the output of `sessionInfo()`.
