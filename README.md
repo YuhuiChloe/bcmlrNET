@@ -33,9 +33,13 @@ Once the installable package is available, install it from GitHub with:
 install.packages("remotes")
 remotes::install_github("YuhuiChloe/bcmlrNET")
 ```
+To accelerate posterior sampling, `bcmlrNET` implements computationally
+intensive matrix operations and node-level parameter updates in C++ through
+`Rcpp` and `RcppArmadillo`. The sampler also caches intermediate results to
+avoid redundant calculations.
 
-The implementation includes C++ code through `Rcpp` and `RcppArmadillo`.
-Building from source requires an R-compatible C++ toolchain.
+Users fit models and generate visualizations through R without writing C++
+code. Building from source requires an R-compatible C++ toolchain.
 
 ## Input data
 
