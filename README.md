@@ -1,6 +1,6 @@
 # bcmlrNET
 
-**When did the network change, and what changed with it?**
+## When did the network change, and what changed with it?**
 
 `bcmlrNET` is R software for detecting and interpreting changepoints in dynamic
 networks. It analyzes a sequence of adjacency matrices, optionally together
@@ -141,7 +141,7 @@ If zero changepoints are selected, the function returns summaries of the
 number of changepoints without a refitted model. Location and coefficient plots
 should then be skipped.
 
-### Main results
+### Main outputs
 
 | Component | Contents |
 | --- | --- |
@@ -155,6 +155,11 @@ should then be skipped.
 
 In model-selection output, `Kappa_mode`, `Kappa`, `Beta`, `U`, and `Lambda`
 are present only when the selected number of changepoints is positive.
+
+The model-selection output also includes `fit$auc_diagnostics`, which
+summarizes the availability of AUC confidence intervals during the initial
+fit. See [AUC diagnostics](documentation/auc-diagnostics.md) for column
+definitions, the treatment of unavailable intervals, and warning control.
 
 ## Explore the detected changes
 
