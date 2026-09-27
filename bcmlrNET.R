@@ -6,7 +6,6 @@ library(MASS) # for mvrnorm()
 library(pROC) # for ROC curves and AUC values
 library(DirichletReg)
 
-options(pROCProgress = list(name = "none"))# Disable pROC progress bar globally
 
 Rcpp::sourceCpp(code = '
 #include <RcppArmadillo.h>
@@ -146,7 +145,7 @@ Rcpp::List update_class_cpp(const arma::cube& A,
 }
 
 // ============================================================
-// Cached class update for the hybrid R/C version.
+// Cached class update for the R/C++ implementation.
 // This keeps AU = A_t * U_k, q_k, and Q_k inside C++ across
 // calls using an external pointer.  The goal is to avoid
 // rebuilding the large AU cache for every Spike_Slab class update.
@@ -349,7 +348,7 @@ Rcpp::List update_class_spikeslab_cached_xptr_cpp(const arma::cube& A,
 
 ')
 
-bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1, 
+bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1, 
                     prior_kappa = "default", alpha_f = 0.1, 
                     min_size = 30, sd_beta = 3, thinning = 1, 
                     num_iter = 5000, num_warmup = 2500, print_outputs = FALSE, 
@@ -357,82 +356,155 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
                     prior_for_U = c("Gaussian", "Spike_Slab"), sparse_networks = FALSE, 
                     center_std_A = TRUE, seed  = NULL,
                     lambda_init = c("equal", "prior", "zero")){
-
+  
+  # Validate scalar arguments before using them or setting the seed.
+  check_number <- function(x, name) {
+    if (!is.numeric(x) || is.complex(x) || length(x) != 1L ||
+        !is.finite(x)) {
+      stop(name, " must be one finite real number.", call. = FALSE)
+    }
+  }
+  
+  check_integer <- function(x, name, lower = 1) {
+    check_number(x, name)
+    if (x != floor(x) || x < lower || x > .Machine$integer.max) {
+      stop(
+        name, " must be an integer between ", lower, " and ",
+        .Machine$integer.max, ".", call. = FALSE
+      )
+    }
+  }
+  
+  check_flag <- function(x, name) {
+    if (!is.logical(x) || length(x) != 1L || is.na(x)) {
+      stop(name, " must be TRUE or FALSE.", call. = FALSE)
+    }
+  }
+  
+  check_integer(num_CP, "num_CP")
+  check_integer(latent_dim, "latent_dim")
+  check_integer(num_iter, "num_iter")
+  check_integer(num_warmup, "num_warmup", lower = 0)
+  check_integer(thinning, "thinning")
+  check_integer(min_size, "min_size", lower = 0)
+  
+  if (num_warmup >= num_iter) {
+    stop("num_warmup must be smaller than num_iter.", call. = FALSE)
+  }
+  
+  check_number(b_tau, "b_tau")
+  check_number(sd_beta, "sd_beta")
+  check_number(alpha_f, "alpha_f")
+  check_number(eta_dir, "eta_dir")
+  
+  if (b_tau <= 0 || sd_beta <= 0) {
+    stop("b_tau and sd_beta must be positive.", call. = FALSE)
+  }
+  if (alpha_f <= 0 || alpha_f >= 1) {
+    stop("alpha_f must be strictly between 0 and 1.", call. = FALSE)
+  }
+  
+  check_flag(print_outputs, "print_outputs")
+  check_flag(print_progress, "print_progress")
+  check_flag(model_selection, "model_selection")
+  check_flag(sparse_networks, "sparse_networks")
+  check_flag(center_std_A, "center_std_A")
+  
+  if (!is.null(seed)) {
+    check_integer(seed, "seed", lower = -.Machine$integer.max)
+  }
+  
+  valid_default_prior <- is.character(prior_kappa) &&
+    length(prior_kappa) == 1L && !is.na(prior_kappa) &&
+    prior_kappa == "default"
+  if (!valid_default_prior && !is.function(prior_kappa)) {
+    stop("prior_kappa must be 'default' or a function.", call. = FALSE)
+  }
+  
+  prior_for_U <- match.arg(prior_for_U)
+  lambda_init <- match.arg(lambda_init)
+  
+  # Record which inputs were supplied before creating placeholders.
+  has_A <- !is.null(A)
+  has_S <- !is.null(S)
+  if (!has_A && !has_S) {
+    stop("Supply A, S, or both.", call. = FALSE)
+  }
+  
+  # S: one row per observation and one column per network statistic.
+  if (has_S) {
+    if (is.data.frame(S)) {
+      numeric_columns <- vapply(
+        S, function(x) is.numeric(x) && !is.complex(x), logical(1)
+      )
+      if (!all(numeric_columns)) {
+        stop("Every column of S must be numeric.", call. = FALSE)
+      }
+      S <- as.matrix(S)
+    }
+    if (!is.matrix(S) || !is.numeric(S) || is.complex(S) ||
+        nrow(S) < 2L || ncol(S) < 1L || any(!is.finite(S))) {
+      stop(
+        "S must be a finite numeric matrix with at least two rows and one column.",
+        call. = FALSE
+      )
+    }
+  }
+  
+  # A: equally sized, symmetric adjacency matrices with zero diagonals.
+  if (has_A) {
+    if (!is.list(A) || is.data.frame(A) || length(A) < 2L) {
+      stop("A must be a list of at least two adjacency matrices.", call. = FALSE)
+    }
+    first_dims <- dim(A[[1L]])
+    for (tt in seq_along(A)) {
+      A_t <- A[[tt]]
+      if (!(is.matrix(A_t) || methods::is(A_t, "Matrix"))) {
+        stop("A[[", tt, "]] must be a matrix.", call. = FALSE)
+      }
+      dims <- dim(A_t)
+      if (length(dims) != 2L || any(dims < 1L) || dims[1L] != dims[2L]) {
+        stop("A[[", tt, "]] must be a nonempty square matrix.", call. = FALSE)
+      }
+      if (!identical(dims, first_dims)) {
+        stop("All adjacency matrices must have the same dimensions.", call. = FALSE)
+      }
+      A_check <- as.matrix(A_t)
+      if (!(is.numeric(A_check) || is.logical(A_check)) ||
+          is.complex(A_check) || any(!is.finite(A_check))) {
+        stop("A[[", tt, "]] must contain finite real values.", call. = FALSE)
+      }
+      if (any(abs(diag(A_check)) >= 1e-8)) {
+        stop("A[[", tt, "]] must have a zero diagonal.", call. = FALSE)
+      }
+      if (!isTRUE(all.equal(
+        A_check, t(A_check), tolerance = 1e-8, check.attributes = FALSE
+      ))) {
+        stop("A[[", tt, "]] must be symmetric.", call. = FALSE)
+      }
+    }
+  }
+  
+  if (has_A && has_S && length(A) != nrow(S)) {
+    stop("length(A) must equal nrow(S).", call. = FALSE)
+  }
+  Tt_all <- if (has_A) length(A) else nrow(S)
+  
+  # Preserve the original placeholder convention for an absent input.
+  if (!has_A) {
+    A <- lapply(seq_len(Tt_all), function(tt) matrix(0, 1L, 1L))
+  }
+  if (!has_S) {
+    S <- matrix(0, nrow = Tt_all, ncol = 1L)
+  }
+  n <- nrow(A[[1L]])
+  p <- ncol(S)
+  D <- latent_dim
+  
+  # Each changepoint is the last observation in the preceding segment.
+  # Internal kappa indexes the training series; original_kappa indexes
+  # the original input series.
   if (!is.null(seed)) set.seed(seed)
-  # S is a matrix with Tt rows and p columns of summary statistics.
-  # A is an input series with Tt matrices in dimensions n \times n.
-  #===============#
-  # Sanity checks ####
-  #===============#
-  # A function that returns nothing and does sanity checks 
-  # on the input list of adjacency matrices
-  sanitycheck_on_A = function(A){
-    # sanity checks on A: 
-    if (!is.list(A)){ 
-      stop("Please input a list of adjacency matrices.") 
-    }else if (is.list(A)){
-      if (length(A) == 1){
-        stop("Please include more than one adjacency matrices in your list.") 
-      }else if (length(A) > 1){
-        # check if all adjacency matrices have the same dimensions (i.e., same number of nodes)
-        first_dims = dim(A[[1]])
-        all_dims_match = all(sapply(A, function (m) identical(dim(m), first_dims)))
-        if (!all_dims_match){
-          stop("All adjacency matrices in your list must have the same dimensions.")
-        }
-        all_finite = all(sapply(A, function (m) all(is.finite(as.matrix(m)))))
-        if (!all_finite){
-          stop("All adjacency matrices in your list must contain only finite values.") # prevent NA/Inf from entering the A-block updates.
-        }
-        all_zero_diag = all(sapply(A, function (m) all(abs(diag(as.matrix(m))) < 1e-8)))
-        if (!all_zero_diag){
-          stop("All adjacency matrices in your list must have zero diagonal entries.") #  the 1/2 <A, B> calculation assumes no self-loops.
-        }
-        all_symmetric = all(sapply(A, function (m) isTRUE(all.equal(as.matrix(m), t(as.matrix(m)), tolerance = 1e-8, check.attributes = FALSE))))
-        if (!all_symmetric){
-          stop("All adjacency matrices in your list must be symmetric.") # the A-block update assumes undirected networks.
-        }
-      } # end of the case if A_list contains more than one matrices
-    } # end of the case if A is a list
-  }
-  # Track whether A or S was provided by the user before placeholder inputs are created.
-  has_A = !is.null(A)
-  has_S = !is.null(S)
-  if (is.null(A) && is.null(S)){
-    stop("Please enter a list of adjacency matrices or/and a matrix of network statistics.")
-  }else if (is.null(A) && !is.null(S)){
-    Tt_all = dim(S)[1]  # total number of observations
-    A = list() # set A to zero
-    for (t in 1:Tt_all){
-      A[[t]] = matrix(0,1,1)
-    }
-  }else if (!is.null(A) && is.null(S)){
-    Tt_all = length(A)  # total number of observations
-    S = matrix(0,nrow = Tt_all, ncol = 1)  # set S to zero
-    sanitycheck_on_A(A)
-  }# end of the case if A is not NULL but S is NULL
-  else if (!is.null(A) && !is.null(S)){
-    Tt_all = length(A)  # total number of observations
-    sanitycheck_on_A(A) 
-    if (length(A) != dim(S)[1]){
-      stop("The series of adjacency matrices (A) and summary statistics (S) must have the same length. ")
-    }
-  }
-  n = dim(A[[1]])[2] # number of nodes
-  p = dim(S)[2] # number of summary statistics
-  # Tt_all = length(A)  # total number of observations
-  D = latent_dim # dimensions of latent variables per node 
-  prior_for_U = match.arg(prior_for_U)
-  lambda_init = match.arg(lambda_init) 
-  if (!is.logical(sparse_networks) || length(sparse_networks) != 1){
-    stop("sparse_networks must be TRUE or FALSE.")
-  }
-  if (!is.logical(center_std_A) || length(center_std_A) != 1){
-    stop("center_std_A must be TRUE or FALSE.")
-  }
-  # if (latent_dim > n){
-  #   stop("The number of latent variables (D) cannot exceed the number of nodes (n).")
-  # }
   #=================#
   # Data processing ####
   #=================#
@@ -513,14 +585,14 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
   
   upper_idx_A = upper.tri(matrix(0, nrow = n, ncol = n), diag = FALSE)
   
-  # Use all observations (thinning =1) when num_CP is known
+  # Fit on all observations when thinning = 1; no data are held out.
   if (thinning ==1){ 
     Tt = Tt_all
     all_idx = seq_len(Tt) # all indices from the input data
     train_idx = all_idx
     holdout_idx = all_idx
     
-    # Standardize and center the summary statistcis S
+    # Standardize and center the summary statistics S
     if (dim(S)[2] == 1){
       m = mean(S, na.rm = TRUE)
     }else{
@@ -530,7 +602,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     sdv[sdv == 0] = 1 # Avoid divide-by-zero in standardization: sdv = 0 could occur if the input data has a column of the same constant. 
     S = center_standardize(S, m, sdv)
     S_auc = S
-    S_all = S
     
     if (sparse_networks){
       A_all_raw = to_sparse_list(A)
@@ -556,27 +627,32 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       A = A_all
     }
   }
-  # Set thinning >1 when selecting the number of changepoints (model_selection = TRUE)
+  # With thinning > 1, hold out every thinning-th observation from fitting.
   else if (thinning > 1){ 
-    min_size = round(min_size*(1 - 1/thinning))
-    Tt = dim(S)[1]
-    all_idx = seq_len(Tt) # all indices from the input data
-    holdout_idx = all_idx[all_idx%%thinning == 0] # the indices of the held-out samples
-    train_idx = all_idx[-holdout_idx] # the indices for fitting the model (the trainng set indices)
+    # Preserve the existing conversion of min_size to the training scale.
+    min_size <- round(min_size * (1 - 1 / thinning))
+    Tt <- nrow(S)
+    all_idx <- seq_len(Tt)
+    holdout_idx <- all_idx[all_idx %% thinning == 0L]
+    train_idx <- all_idx[all_idx %% thinning != 0L]
     
-    S_all = S
-    S_auc = S_all[holdout_idx, , drop = FALSE] # rows of S selected to calculate AUC
-    S = S_all[-holdout_idx, , drop = FALSE] # rows of S selected to fit the model  
-    
-    if (sparse_networks){
-      A_all_raw = to_sparse_list(A)
-    }else{
-      A_all_raw = A
+    if (length(holdout_idx) == 0L) {
+      stop("thinning leaves no held-out observations.", call. = FALSE)
     }
-    A_auc_raw = A_all_raw[holdout_idx]
-    A_train_raw = A_all_raw[-holdout_idx]
+    if (length(train_idx) < 2L) {
+      # 2 is the minimum number of training observations to calculate sample standard deviations
+      stop("At least two training observations are required.", call. = FALSE)
+    }
     
-    # Standardize and center the summary statistcis S
+    S_all <- S
+    S_auc <- S_all[holdout_idx, , drop = FALSE]
+    S <- S_all[train_idx, , drop = FALSE]
+    
+    A_all_raw <- if (sparse_networks) to_sparse_list(A) else A
+    A_auc_raw <- A_all_raw[holdout_idx]
+    A_train_raw <- A_all_raw[train_idx]
+    
+    # Standardize and center the summary statistics S
     if (ncol(S) == 1){
       m = mean(S, na.rm = TRUE)
     }else{
@@ -586,7 +662,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     sdv[sdv == 0] = 1 # Avoid divide-by-zero in standardization: sdv = 0 could occur if the input data has a column of the same constant. 
     S = center_standardize(S, m, sdv) # center & standardize the subseries used to fit the model with its column means
     S_auc = center_standardize(S_auc, m, sdv) # center & standardize the held-out samples with the same column means
-    S_all = center_standardize(S_all, m, sdv)
     
     if (center_std_A){
       A_upper_train = A_list_to_upper(A_train_raw, upper_idx_A)
@@ -600,11 +675,9 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       }
       A = center_standardize_A(A_train_raw, m_A, sd_A, upper_idx_A, n)
       A_auc = center_standardize_A(A_auc_raw, m_A, sd_A, upper_idx_A, n)
-      A_all = center_standardize_A(A_all_raw, m_A, sd_A, upper_idx_A, n)
     }else{
       A = A_train_raw
       A_auc = A_auc_raw
-      A_all = A_all_raw
     }
   }
   
@@ -612,6 +685,14 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
   Tt = dim(S)[1] # number of observations
   K = num_CP + 1 # number of classes
   L = num_CP # number of changepoints
+  
+  # Each segment must contain at least min_size + 1 training observations.
+  if (Tt < K * (min_size + 1)) {
+    stop(
+      "Too few training observations for the requested number and lengths of segments.",
+      call. = FALSE
+    )
+  }
   if (has_A){
     A_cpp = pack_A_cube(A)
     if (model_selection){
@@ -622,44 +703,34 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
   #===================#
   # Utility functions ####
   #===================#
-  # https://arxiv.org/pdf/2205.04997
-  # https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
-  # A function that mitigates computational issues in massive division or multiplication of extreme values.
-  logsumexp = function(x){
-    # Return -Inf when all entries are non-finite to avoid NaN in probability normalization.
-    x_finite = x[is.finite(x)]
-    if (length(x_finite) == 0){
-      return(-Inf)
+  # Internal linear predictors must be finite.
+  logsumexp <- function(x) {
+    if (any(!is.finite(x))) {
+      stop("Non-finite linear predictors.", call. = FALSE)
     }
-    c = max(x_finite)
-    return(c + log(sum(exp(x_finite - c))))
+    x_max <- max(x)
+    x_max + log(sum(exp(x - x_max)))
   }
-  # Normalize log-weights safely for sample(); 
-  # fall back to a uniform distribution if all weights are invalid.
-  normalize_logweights = function(logweights){
-    if (length(logweights) == 1){
-      return(1)
+
+  # -Inf denotes zero weight; invalid conditionals must not become uniform.
+  normalize_logweights <- function(logweights) {
+    if (anyNA(logweights) || any(logweights == Inf) ||
+        !any(is.finite(logweights))) {
+      stop("Invalid conditional log-weights; cannot sample.", call. = FALSE)
     }
-    if (all(!is.finite(logweights))){
-      return(rep(1/length(logweights), length(logweights)))
-    }
-    max_logweights = max(logweights[is.finite(logweights)])
-    shifted_weights = exp(logweights - max_logweights)
-    shifted_weights[!is.finite(shifted_weights)] = 0
-    sum_shifted = sum(shifted_weights)
-    if (!is.finite(sum_shifted) || sum_shifted <= 0){
-      return(rep(1/length(logweights), length(logweights)))
-    }
-    return(shifted_weights/sum_shifted)
+    weights <- exp(logweights - max(logweights))
+    weights / sum(weights)
   }
   # Robust AUC CI helper for model selection.
-  # Undefined AUCs are stored as NA so final AUC summaries are not inflated.
+  # Unavailable intervals are stored as NA and must be reported by the wrapper.
   # Constant finite scores with both classes are recorded as non-informative AUC = 0.5.
-  # Fix ROC direction because larger scores mean class 1; this permits AUC < 0.5.
+  # Larger scores favor Y_auc = 1 (the later segment); allow AUC < 0.5.
   safe_ci_auc = function(Y_auc, scores, alpha_f){
-    keep = is.finite(scores) & !is.na(Y_auc)
-    Y_auc = as.numeric(Y_auc[keep])
-    scores = as.numeric(scores[keep])
+    if (any(!is.finite(scores))) {
+      stop("Non-finite AUC scores.", call. = FALSE)
+    }
+    Y_auc = as.numeric(Y_auc)
+    scores = as.numeric(scores)
     if (length(Y_auc) < 2 || length(unique(Y_auc)) < 2){
       return(c(NA_real_, NA_real_, NA_real_)) 
     }
@@ -667,7 +738,7 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       return(c(0.5, 0.5, 0.5)) 
     }
     ci_tmp = tryCatch(
-      as.numeric(suppressWarnings(ci.auc(Y_auc, scores, levels = c(0, 1), direction = "<", conf.level = 1-alpha_f, quiet = TRUE))), 
+      as.numeric(suppressWarnings(pROC::ci.auc(Y_auc, scores, levels = c(0, 1), direction = "<", conf.level = 1-alpha_f, quiet = TRUE))),
       error = function(e) c(NA_real_, NA_real_, NA_real_) 
     )
     if (length(ci_tmp) != 3 || any(!is.finite(ci_tmp))){
@@ -686,28 +757,25 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     Y = model.matrix(~ -1 + class, data=class)
     return(Y)
   }
-  
-  # A function that caches A_t %*% U_k, q_tdk, Q_tk, and S_t^T beta_k for a fixed class.
-  build_class_cache = function(A_ls, S_mat, U_k, Lambda_k, Beta_k){
-    TT = length(A_ls)
-    AU_list = vector(mode = "list", length = TT)
-    q_k = matrix(0, nrow = TT, ncol = D)
-    for (t in 1:TT){
-      AU_t = as.matrix(A_ls[[t]] %*% U_k)
-      AU_list[[t]] = AU_t
-      q_k[t,] = 0.5 * colSums(U_k * AU_t)
+  # Evaluate one custom-prior value; zero excludes a candidate.
+  checked_prior_value <- function(kappa_candidate) {
+    value <- prior_kappa(kappa_candidate)
+    if (!is.numeric(value) || is.complex(value) || length(value) != 1L ||
+        !is.finite(value) || value < 0) {
+      stop(
+        "prior_kappa must return one finite, nonnegative real number.",
+        call. = FALSE
+      )
     }
-    Q_k = as.numeric(q_k %*% Lambda_k)
-    SB_k = as.numeric(S_mat %*% Beta_k)
-    return(list(AU = AU_list, q = q_k, Q = Q_k, SB = SB_k))
+    return(value)
   }
-
+  
+  
   #=======================#
   # Create an output list ####
   #=======================#
   out = list()
   out$tau_sq = rep(0, num_iter-num_warmup)
-  #out$Q = array(0, dim = c(num_iter-num_warmup, Tt, K))
   out$Lambda = array(0, dim = c(num_iter-num_warmup, K, D))
   out$U = array(0, dim = c(num_iter-num_warmup, K, n, D))
   out$Z = array(0, dim = c(num_iter-num_warmup, n, K))
@@ -715,8 +783,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
   out$W = array(0, dim = c(num_iter-num_warmup, n, K))
   out$pi = array(0, dim = c(num_iter-num_warmup, D, 3)) # store dimension-specific pi_d = (Pr(0), Pr(1), Pr(-1)) for each latent dimension d.
   dimnames(out$pi) = list(NULL, paste0("dim_", 1:D), c("zero", "pos1", "neg1")) # make the lambda/probability ordering explicit.
-  #out$omega = array(0, dim = c(num_iter-num_warmup, Tt, K))
-  #out$phi = array(0, dim = c(num_iter-num_warmup, Tt, K))
   if (num_CP==1){
     out$Kappa = rep(0, num_iter-num_warmup)
   }else if (num_CP>1){
@@ -736,26 +802,21 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
   #============================#
   # Prior quantities for beta (coefficients of summary statistics):
   m0 = array(data=0, dim=c(p,K-1)) # m0[,k] is the prior mean of the kth coef vec
-  V0 = array(data=0, dim=c(p,p,K-1)) # V0[,,k] is the prior cov. of the kth coef vec
-  V0inv = array(data=0, dim=c(p,p,K-1)) # V0inv[,,k] is the inverse of V0[,,j]
+  V0inv = array(data=0, dim=c(p,p,K-1)) # Prior precision matrices
   sd0 = sd_beta # prior variance for beta (coefficients of summary statistics)
   for(k in 1:(K-1)){
-    V0[,,k] = sd0*diag(p)
     V0inv[,,k] = 1/sd0*diag(p)
   }
   # priors for tau_sq
   a_tau = 4
-  b_tau = b_tau
   # priors for w_ik ~ Beta(a_w, b_w)
   a_w = 1
   b_w = 1
   # prior for pi (Dirichlet)
-  eta_dir = eta_dir # must be >1
-  lambda_support = c(0, 1, -1) # : order pi as (Pr(lambda = 0), Pr(lambda = 1), Pr(lambda = -1)); zero is the favored value.
+  lambda_support = c(0, 1, -1) # Matches the columns of pi: zero, pos1, neg1.
   #===============================#
   # Initialize working quantities ####
   #===============================#
-  # Q = matrix(0, nrow = Tt, ncol = K) # Frobenius inner products
   tau_sq = rigamma(n = 1, a = a_tau, b = b_tau) # inverse gamma variable
   Z = matrix(0, nrow = n, ncol = K) # Bernoulli variables
   Z[,K] = rep(0, n)
@@ -782,11 +843,13 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     }
     W = matrix(rbeta(n*K, shape1 = a_w, shape2 = b_w), nrow = n, ncol = K) # Beta variables
   }
+  # W is unused in the reference slot; zero is a placeholder, not an estimate.
+  W[,K] = 0
   Beta = matrix(0, nrow = p, ncol = K) # coefficients for summary statistics
   pi = matrix(0, nrow = D, ncol = 3) # pi[d,] is dimension-specific, not shared across dimensions.
   colnames(pi) = c("zero", "pos1", "neg1") # explicit ordering matches lambda_support = c(0, 1, -1).
   for (d in 1:D){
-    pi[d,] = as.numeric(DirichletReg::rdirichlet(n = 1, alpha = c(d^eta_dir, 1, 1))) # Dirichlet(d^eta, 1, 1) increasingly favors lambda = 0 as d increases.
+    pi[d,] = as.numeric(DirichletReg::rdirichlet(n = 1, alpha = c(d^eta_dir, 1, 1))) # Dirichlet concentrations for lambda = 0, 1, and -1.
   }
   # Lambda imposes sparsity on the latent variables. 
   Lambda = matrix(0, nrow = K, ncol = D) # initialize dimension-by-dimension so lambda_dk can use pi[d,] when requested.
@@ -805,9 +868,8 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       }
     }
   }
-  Lambda[K,] = rep(0, D) # make the last reference class be zero. 
+  Lambda[K,] = rep(0, D) # Internal reference slot K is fixed at zero.
   omega = matrix(0, nrow = Tt, ncol = K)
-  #if (init == "even"){
   # Initialize CPs at time points that equally split the series 
   if(num_CP==1){
     kappa = round(Tt/2)
@@ -817,7 +879,22 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       kappa[l] = round(Tt/K) *l
     }
   }
-  #}
+  # Keep the initializer unchanged, but reject an inadmissible state.
+  segment_lengths <- diff(c(0, kappa, Tt))
+  if (length(kappa) != L || any(!is.finite(kappa)) ||
+      any(kappa != floor(kappa)) || any(segment_lengths <= min_size)) {
+    stop(
+      paste0(
+        "An initialized segment has too few training observations. ",
+        "Review the initialization or fitting settings before sampling."
+      ),
+      call. = FALSE
+    )
+  }
+  if (is.function(prior_kappa) && checked_prior_value(kappa) == 0) {
+    stop("The initialized changepoints have zero mass under prior_kappa.",
+         call. = FALSE)
+  }
   original_kappa = train_idx[kappa]
   #=============================#
   # Initialize class caches ####
@@ -855,10 +932,13 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
   #=================================#
   if (print_progress){
     pb = txtProgressBar(min = 0, max = num_iter, style = 3)
+    on.exit(close(pb), add = TRUE)
   }
-  start = Sys.time()
   for (iter in 1: num_iter){
     if (num_CP == 1){
+      # The first segment (Y = 0) is the binary reference class.
+      # Internally, slot 1 holds fitted Y = 1 coefficients; slot 2 is zero.
+      # Segment-indexed samples are reordered chronologically before return.
       Y = c(rep(0, times = kappa), rep(1, times = Tt - kappa))
       delta = matrix(Y-1/2, nrow = Tt, ncol = 1)
     }else if (num_CP > 1){
@@ -918,7 +998,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
             cache_sexp = class_cache[[k]]
           )
         }else{
-          # Keep the Gaussian path exactly as before.
           class_upd = update_class_cpp(
             A = A_cpp,
             U_k = U_k,
@@ -942,7 +1021,7 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
         q_k = class_upd$q
         Q_k = class_upd$Q
         #=======================# 
-        # Update Lambda_k (D*D) ####
+        # Update the D diagonal weights for class k ####
         #=======================#
         Lambda_k = Lambda[k,]
         for (d in 1:D){
@@ -958,7 +1037,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
           } 
           # Normalize log-weights safely so sample() never receives NA probabilities.
           probs_lambda = normalize_logweights(logweights) # 3*1 vector that should sum up to 1
-          #probs_lambda = exp(logweights)/(sum(exp(logweights)))
           # Update lambda_dk
           lambda_dk_new = sample(cand_vals, size = 1, prob = probs_lambda)
           Lambda_k[d] = lambda_dk_new
@@ -989,10 +1067,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
         normals = matrix(rnorm(p), p, 1) # A p-vector of standard normals
         precision_beta = crossprod(x = S, y = S * omega[,k]) + V0inv[,,k] # no need for as.numeric(), keep matrix precision, no vector recycling
         Uchol_beta = chol(precision_beta) # Upper Cholesky factor
-        # crossprod(S, delta[, k] + omega[,k] * (c_k - Q_k)) + V0inv[,,k] %*% m0[, k]
-        # Beta[,k] = chol2inv(Uchol_beta) %*% 
-        #   (t(S) %*% (delta[,k] + omega[,k] * (c_k - Q_k)) + V0inv[,,k] %*% m0[, k]) + # used * directly instead of using diag(omega[,k]) %*% vector
-        #   backsolve(Uchol_beta, normals)
         beta_mean = backsolve(Uchol_beta, forwardsolve(t(Uchol_beta), t(S) %*% (delta[,k] + omega[,k] * (c_k - Q_k)) + V0inv[,,k] %*% m0[, k]))
         Beta[,k] = as.numeric(beta_mean + backsolve(Uchol_beta, normals))
         StBk_vec = as.numeric(S %*% Beta[,k])
@@ -1016,17 +1090,14 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     #===========================================#
     if (has_A){
       # pi is dimension-specific.  For each d, pi[d,] = (Pr(lambda_dk = 0), Pr(lambda_dk = 1), Pr(lambda_dk = -1)).
-      # the reference class K has Lambda[K,] fixed at zero for identifiability, so it is not counted as a random draw from pi_d.
+      # Internal reference slot K is fixed at zero and excluded from pi updates.
       for (d in 1:D){
         n_0 = sum(Lambda[1:(K-1), d] == 0)
         n_pos1 = sum(Lambda[1:(K-1), d] == 1)
         n_neg1 = sum(Lambda[1:(K-1), d] == -1)
-        alpha_pi = c(d^eta_dir + n_0, 1 + n_pos1, 1 + n_neg1) # Dirichlet(d^eta, 1, 1) favors zero more strongly as d increases.
+        alpha_pi = c(d^eta_dir + n_0, 1 + n_pos1, 1 + n_neg1) # Prior concentrations plus frequencies among nonreference slots.
         pi[d,] = as.numeric(DirichletReg::rdirichlet(n = 1, alpha = alpha_pi)) # update pi_d separately for each latent dimension.
       }
-      # Dirichlet draw via Gammas for one dimension d, if needed:
-      # gamma_draw = rgamma(3, shape = alpha_pi, rate = 1)
-      # pi[d,] = gamma_draw / sum(gamma_draw)
       #===========================================# 
       # Update tau_sq (shared across all classes) ####
       #===========================================#
@@ -1036,7 +1107,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
         sum_m_k = n * (K-1)
       }
       sum_ss_k = sum(U[1:(K-1), , , drop = FALSE]^2)
-      #tau_sq = 1/rgamma(n=1, shape = a_tau + (D/2) *sum_m_k, rate =b_tau + 0.5*sum_ss_k)
       tau_sq = rigamma(n = 1, a = a_tau + (D/2) *sum_m_k, b = b_tau + 0.5*sum_ss_k)
     }else{
       # If A is NULL, keep pi and tau_sq fixed at zero.
@@ -1044,35 +1114,33 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       colnames(pi) = c("zero", "pos1", "neg1") # explicit ordering is retained for downstream output.
       tau_sq = 0
     }
-    #} # The updates of tau_sq and pi should not be included in the class update for-loop 
     # Done updating all other parameters except the changepoints
     
     #=============================#
     # Update kappa (changepoints) ####
     #=============================#
-    # recompute phi using current U, Lambda, Beta before updating kappa
-    phi = matrix(0, nrow = Tt, ncol = K) 
-    for (kk in 1:(K-1)){ 
-      phi[,kk] = Q_iter[,kk] + as.numeric(S %*% Beta[,kk]) 
+    # Use the updated network and summary-statistic contributions.
+    phi = Q_iter + StB
+    if (any(!is.finite(phi))) {
+      stop("Non-finite linear predictors in the changepoint update.",
+           call. = FALSE)
     } 
     if (num_CP == 1){
-      # Phi_exp = exp(phi[,1]) 
-      # P = Phi_exp/(1+Phi_exp)
-      P = plogis(phi[,1]) # numerically stable logistic probabilities
-      # range = 1:(N-1)
+      log_p0 = stats::plogis(phi[,1], lower.tail = FALSE, log.p = TRUE)
+      log_p1 = stats::plogis(phi[,1], log.p = TRUE)
       range = (1 + min_size):(Tt - 1 - min_size) 
       lr = length(range)
       log_prob_vec_prop = rep(0, lr) 
       if (is.character(prior_kappa) && prior_kappa == "default"){
         for(l in 1:lr){
-          log_prob_vec_prop[l] = sum(log(1-P[1:range[l]])) + sum(log(P[(range[l]+1):Tt])) - 
+          log_prob_vec_prop[l] = sum(log_p0[1:range[l]]) + sum(log_p1[(range[l]+1):Tt]) -
             length(1:range[l])*log(length(1:range[l])) - 
             length((range[l]+1):Tt)*log(length((range[l]+1):Tt)) 
         }
       }else if (is.function(prior_kappa)){
         for(l in 1:lr){
-          jt_pmf_kappa = prior_kappa(range[l]) # evaluate custom prior at candidate kappa
-          log_prob_vec_prop[l] = sum(log(1-P[1:range[l]])) + sum(log(P[(range[l]+1):Tt])) + log(jt_pmf_kappa)
+          jt_pmf_kappa <- checked_prior_value(range[l])# evaluate custom prior at candidate kappa
+          log_prob_vec_prop[l] = sum(log_p0[1:range[l]]) + sum(log_p1[(range[l]+1):Tt]) + log(jt_pmf_kappa)
         }
       }
       prob_vec = normalize_logweights(log_prob_vec_prop) 
@@ -1091,56 +1159,46 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
         for (kk in 1:(K-1)){
           phi_auc[,kk] = Q_auc_current[,kk] + as.numeric(S_auc %*% Beta[,kk])
         }
-        # Update the matrix of probabilities of success based on the fitted coefficients
-        P_auc = plogis(phi_auc[,1])
-        ci = safe_ci_auc(Y_auc, P_auc, alpha_f) 
+        # Use log-odds as AUC scores to avoid probability-scale ties.
+        ci = safe_ci_auc(Y_auc, phi_auc[,1], alpha_f)
       }
     }else if(num_CP > 1){
-      # Create the P matrix
-      # Phi_exp = exp(phi) # Tt * K
-      # P = t(apply(Phi_exp, 1, function(x) x/sum(x))) # Normalize the rows of Phi_exp to get P
-      P = t(apply(phi, 1, function(x) normalize_logweights(x))) # stable softmax with a safe fallback when a row is non-finite
+      log_P = t(apply(phi, 1, function(x) {
+        shifted = x - max(x)
+        shifted - log(sum(exp(shifted)))
+      }))
       if (is.character(prior_kappa) && prior_kappa == "default"){
         for(j in 1:(K-1)){
-          # Now calculate the range of values that kappa[j] can take under its full
-          # conditional distribution and the vector prob_vec, which is defined
-          # such that prob_vec[k] is the log of the conditional probability that
-          # kappa[j] = range[k] given all the other data and parameters.
+          # Evaluate and normalize the conditional log-weights for kappa[j].
           if(j==1){
-            #range = 1:(kappa[j+1]-1)
             range = (1 + min_size):(kappa[j+1] - 1 - min_size) 
             lr = length(range)
             log_prob_vec_prop = rep(0, lr)
             for(l in 1:lr){
-              log_prob_vec_prop[l] = sum(log(P[1:range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) - 
+              log_prob_vec_prop[l] = sum(log_P[1:range[l],j]) + sum(log_P[(range[l]+1):kappa[j+1],j+1]) -
                 length(1:range[l])*log(length(1:range[l])) - 
                 length((range[l]+1):kappa[j+1])*log(length((range[l]+1):kappa[j+1])) 
             }
-            #prob_vec = exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
             prob_vec = normalize_logweights(log_prob_vec_prop)
           } else if(j==L){
-            #range = (kappa[j-1]+1):(Tt-1)
             range = (kappa[j-1] + 1 + min_size):(Tt - 1 - min_size) 
             lr = length(range)
             log_prob_vec_prop = rep(0, lr)
             for(l in 1:lr){
-              log_prob_vec_prop[l] = sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):Tt,j+1])) - 
+              log_prob_vec_prop[l] = sum(log_P[(kappa[j-1]+1):range[l],j]) + sum(log_P[(range[l]+1):Tt,j+1]) -
                 length((kappa[j-1]+1):range[l])*log(length((kappa[j-1]+1):range[l])) - 
                 length((range[l]+1):Tt)*log(length((range[l]+1):Tt)) 
             }
-            #prob_vec = exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
             prob_vec = normalize_logweights(log_prob_vec_prop)
           } else{
-            #range = (kappa[j-1]+1):(kappa[j+1]-1)
             range = (kappa[j-1] + 1 + min_size):(kappa[j+1] - 1 - min_size) 
             lr = length(range)
             log_prob_vec_prop = rep(0, lr)
             for(l in 1:lr){
-              log_prob_vec_prop[l] = sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) - 
+              log_prob_vec_prop[l] = sum(log_P[(kappa[j-1]+1):range[l],j]) + sum(log_P[(range[l]+1):kappa[j+1],j+1]) -
                 length((kappa[j-1]+1):range[l])*log(length((kappa[j-1]+1):range[l])) - 
                 length((range[l]+1):kappa[j+1])*log(length((range[l]+1):kappa[j+1])) 
             }
-            #prob_vec = exp(log_prob_vec_prop)/sum(exp(log_prob_vec_prop))
             prob_vec = normalize_logweights(log_prob_vec_prop)
           }
           if(lr > 1){
@@ -1157,8 +1215,8 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
             for(l in 1:lr){
               kappa_prop = kappa # evaluate custom prior at candidate kappa vector
               kappa_prop[j] = range[l] 
-              jt_pmf_kappa = prior_kappa(kappa_prop) 
-              log_prob_vec_prop[l] = sum(log(P[1:range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) + log(jt_pmf_kappa)
+              jt_pmf_kappa = checked_prior_value(kappa_prop) 
+              log_prob_vec_prop[l] = sum(log_P[1:range[l],j]) + sum(log_P[(range[l]+1):kappa[j+1],j+1]) + log(jt_pmf_kappa)
             }
             prob_vec = normalize_logweights(log_prob_vec_prop)
           } else if(j==L){
@@ -1168,8 +1226,8 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
             for(l in 1:lr){
               kappa_prop = kappa # evaluate custom prior at candidate kappa vector
               kappa_prop[j] = range[l] 
-              jt_pmf_kappa = prior_kappa(kappa_prop) 
-              log_prob_vec_prop[l] = sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):Tt,j+1])) + log(jt_pmf_kappa)
+              jt_pmf_kappa = checked_prior_value(kappa_prop) 
+              log_prob_vec_prop[l] = sum(log_P[(kappa[j-1]+1):range[l],j]) + sum(log_P[(range[l]+1):Tt,j+1]) + log(jt_pmf_kappa)
             }
             prob_vec = normalize_logweights(log_prob_vec_prop)
           } else{
@@ -1179,8 +1237,8 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
             for(l in 1:lr){
               kappa_prop = kappa 
               kappa_prop[j] = range[l] 
-              jt_pmf_kappa = prior_kappa(kappa_prop) 
-              log_prob_vec_prop[l] = sum(log(P[(kappa[j-1]+1):range[l],j])) + sum(log(P[(range[l]+1):kappa[j+1],j+1])) + log(jt_pmf_kappa)
+              jt_pmf_kappa = checked_prior_value(kappa_prop) 
+              log_prob_vec_prop[l] = sum(log_P[(kappa[j-1]+1):range[l],j]) + sum(log_P[(range[l]+1):kappa[j+1],j+1]) + log(jt_pmf_kappa)
             }
             prob_vec = normalize_logweights(log_prob_vec_prop)
           }
@@ -1192,7 +1250,7 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       # Done updating the changepoints (kappas)
       #============================================#
       # Select the number of multiple changepoints: ####
-      # Which of the fitted changepoints correspond to true changeppints?  #
+      # Which fitted changepoints appear to correspond to true changepoints?  #
       #============================================#
       # Update kappa in the scale of the entire series
       original_kappa = train_idx[kappa]
@@ -1207,31 +1265,29 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
         for (kk in 1:(K-1)){
           phi_auc[,kk] = Q_auc_current[,kk] + as.numeric(S_auc %*% Beta[,kk])
         }
-        # "ratios" are the probabilities of a subject belonging to
-        # class j+1 other than class j
-        # Pairwise AUC scores below are computed directly from phi_auc with plogis().
-        # This avoids possible 0/0 ratios after full K-class softmax underflow.
+        # Pairwise log-odds have the same ordering as conditional
+        # probabilities, without saturation at zero or one.
         Y_auc_all = kappa_to_Y(original_kappa, Tt_all, L)[holdout_idx, , drop = FALSE] # Y in Tt_auc *K
         ci = matrix(0, nrow = K-1, ncol = 3) # each row has a LB, point estimate, and UB
         for (j in 1:(K-1)){
           if(j == 1){
             rg = 1:original_kappa[j+1]
             idx_test = which(holdout_idx %in% rg)
-            ratios = plogis(phi_auc[idx_test, j+1] - phi_auc[idx_test, j]) 
+            scores = phi_auc[idx_test, j+1] - phi_auc[idx_test, j]
             Y_auc = Y_auc_all[idx_test, j + 1]
-            ci[j,] = safe_ci_auc(Y_auc, ratios, alpha_f) 
+            ci[j,] = safe_ci_auc(Y_auc, scores, alpha_f)
           }else if (j == K-1){
             rg = (original_kappa[j-1]+1):Tt_all
             idx_test = which(holdout_idx %in% rg)
-            ratios = plogis(phi_auc[idx_test, j+1] - phi_auc[idx_test, j]) 
+            scores = phi_auc[idx_test, j+1] - phi_auc[idx_test, j]
             Y_auc = Y_auc_all[idx_test, j + 1]
-            ci[j,] = safe_ci_auc(Y_auc, ratios, alpha_f) 
+            ci[j,] = safe_ci_auc(Y_auc, scores, alpha_f)
           }else{
             rg = (original_kappa[j-1]+1):original_kappa[j+1]
             idx_test = which(holdout_idx %in% rg)
-            ratios = plogis(phi_auc[idx_test, j+1] - phi_auc[idx_test, j]) 
+            scores = phi_auc[idx_test, j+1] - phi_auc[idx_test, j]
             Y_auc = Y_auc_all[idx_test, j + 1]
-            ci[j,] = safe_ci_auc(Y_auc, ratios, alpha_f) 
+            ci[j,] = safe_ci_auc(Y_auc, scores, alpha_f)
           }
         }
       } # End of selecting the number of changepoints given that num_CP >1
@@ -1242,7 +1298,6 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     # Store updates to the output list ####
     #=================================#
     if ( iter > num_warmup){
-      #out$Q[iter-num_warmup,,] = Q_iter
       out$tau_sq[iter-num_warmup] = tau_sq
       out$Lambda[iter-num_warmup,,] = Lambda
       out$U[iter-num_warmup,,,] = U
@@ -1250,10 +1305,8 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
       out$Beta[iter-num_warmup,,] = Beta
       out$W[iter-num_warmup,,] = W
       out$pi[iter-num_warmup, , ] = pi # store the D x 3 matrix of dimension-specific pi_d values.
-      #out$omega[iter-num_warmup,,] = omega
-      #out$phi[iter-num_warmup,,] = phi
       
-      # Store changepoints and AUCs: 
+      # Store changepoints and AUC confidence-interval lower bounds:
       if (num_CP==1){
         out$Kappa[iter-num_warmup] = original_kappa
         if (model_selection){
@@ -1269,19 +1322,15 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     
     if (print_progress){ setTxtProgressBar(pb, iter)}
   } # End of the Gibbs sampler (iter = 1, ..., num_iter)
-  end = Sys.time()
-  if (print_progress){ close(pb) }
   #================================#
   # END Gibbs sampling (iter)   ####
   #================================#
   
-  # Store posterior mode changepoints: 
+  # Point estimates (marginal posterior modes) of changepoints:
   if (num_CP == 1){
-    # Use posterior modes as changepoint estimates:
     cp = table(out$Kappa)
     out$Kappa_mode = as.integer(names(cp)[which.max(cp)]) # posterior mode
   }else if (num_CP > 1){
-    # Use posterior modes as changepoint estimates:
     cps = c()
     for (l in 1:L){
       cp = table(out$Kappa[,l])
@@ -1290,6 +1339,20 @@ bcmlrNET = function(A, S, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1,
     }
     out$Kappa_mode = cps # posterior modes
   }
-  # out$runTime = end-start
+  # Return segment-indexed samples in chronological order.
+  # Reference: first segment (Y = 0) for one changepoint;
+  # last chronological segment for multiple changepoints.
+  if (num_CP == 1) {
+    segment_order <- c(2L, 1L)
+    out$Beta <- out$Beta[, , segment_order, drop = FALSE]
+    out$U <- out$U[, segment_order, , , drop = FALSE]
+    out$Lambda <- out$Lambda[, segment_order, , drop = FALSE]
+    out$Z <- out$Z[, , segment_order, drop = FALSE]
+    out$W <- out$W[, , segment_order, drop = FALSE]
+  }
+  
+  if (print_outputs) {
+    utils::str(out)
+  }
   return(out)
 }
