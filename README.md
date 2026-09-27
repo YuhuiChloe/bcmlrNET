@@ -1,6 +1,6 @@
 # bcmlrNET
 
-## When did the network change, and what changed with it?**
+## When did the network change, and what changed with it?
 
 `bcmlrNET` is R software for detecting and interpreting changepoints in dynamic
 networks. It analyzes a sequence of adjacency matrices, optionally together
@@ -161,7 +161,7 @@ summarizes the availability of AUC confidence intervals during the initial
 fit. See [AUC diagnostics](documentation/auc-diagnostics.md) for column
 definitions, the treatment of unavailable intervals, and warning control.
 
-## Explore the detected changes
+## What changed, and how certain are we?
 
 Start with uncertainty in the number of changepoints:
 
@@ -174,8 +174,11 @@ p_num_cp <- bcmlrNET::plot_histogram(
 print(p_num_cp)
 ```
 
-Here, the distribution summarizes the number of fitted changepoints that
-appear to correspond to true changepoints.
+The following figure shows the posterior distribution of the number of fitted
+changepoints that appear to correspond to true changepoints in the POLECAT
+application.
+
+![POLECAT posterior distribution of the number of changepoints](man/figures/POLECAT_DistNumCP.png)
 
 Next, examine changes in the coefficients of the network statistics. This plot
 shows posterior means and 95% credible intervals for differences between
@@ -222,6 +225,8 @@ them during the corresponding week.
 The analysis examines when communication patterns change and which employees
 and employee pairs are most involved in the detected changes.
 
+See the [Enron analysis script](analysis/Enron_networks.R) for the application workflow.
+
 ### POLECAT: changes in international conflict networks
 
 [POLECAT](https://andrewhalterman.com/publication/plover-polecat-new-event-data/)
@@ -238,6 +243,8 @@ during the corresponding week.
 The analysis examines when these conflict relations change and uses posterior
 summaries to characterize the countries and country pairs associated with
 the detected changes.
+
+See the [POLECAT analysis script](analysis/POLECAT_networks.R) for the application workflow.
 
 ## Reproduce an application
 
