@@ -3,7 +3,7 @@ Type: Package
 Title: Generalized Bayesian Changepoint Analysis for Dynamic Networks
 Version: 0.0.0.9000
 Authors@R: person("Yuhui", "Wang", role = c("aut", "cre"),
-    email = "REPLACE_WITH_YOUR_EMAIL@example.org")
+    email = "yuhuicw@gmail.com")
 Description: Generalized Bayesian analysis of changes in a sequence of
     undirected networks. Fits a specified number of changepoints using
     Gibbs sampling, selects the number through posterior AUC summaries,
