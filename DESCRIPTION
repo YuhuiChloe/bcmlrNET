@@ -1,0 +1,44 @@
+Package: bcmlrNET
+Type: Package
+Title: Generalized Bayesian Changepoint Analysis for Dynamic Networks
+Version: 0.0.0.9000
+Authors@R: person("Yuhui", "Wang", role = c("aut", "cre"),
+    email = "REPLACE_WITH_YOUR_EMAIL@example.org")
+Description: Generalized Bayesian analysis of changes in a sequence of
+    undirected networks. Fits a specified number of changepoints using
+    Gibbs sampling, selects the number through posterior AUC summaries,
+    and provides uncertainty summaries and visualizations at network,
+    dyad and node levels. Computationally intensive network updates are
+    implemented in C++ through 'Rcpp' and 'RcppArmadillo'.
+License: GPL (>= 3)
+Encoding: UTF-8
+Depends: R (>= 4.2)
+Imports:
+    BayesLogit,
+    DirichletReg,
+    LearnBayes,
+    MASS,
+    Matrix,
+    Rcpp,
+    ggplot2 (>= 3.4.0),
+    grDevices,
+    graphics,
+    grid,
+    methods,
+    rlang,
+    scales,
+    stats,
+    utils,
+    pROC
+LinkingTo:
+    Rcpp,
+    RcppArmadillo
+Suggests:
+    matrixStats,
+    testthat (>= 3.2.0)
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+SystemRequirements: C++14
+NeedsCompilation: yes
+URL: https://github.com/YuhuiChloe/bcmlrNET
+BugReports: https://github.com/YuhuiChloe/bcmlrNET/issues
