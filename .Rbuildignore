@@ -1,0 +1,15 @@
+^\.github$
+^\.gitignore$
+^\.gitattributes$
+^.*\.Rproj$
+^\.Rproj\.user$
+^analysis$
+^documentation$
+^dev$
+^review$
+^PACKAGING\.md$
+^SOURCE_AUDIT\.md$
+^LICENSE$
+^README\.md$
+^.*\.Rcheck$
+^bcmlrNET_.*\.(tar\.gz|zip)$
