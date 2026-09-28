@@ -38,7 +38,7 @@ Suggests:
     testthat (>= 3.2.0)
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
-SystemRequirements: C++14
+SystemRequirements: C++17
 NeedsCompilation: yes
 URL: https://github.com/YuhuiChloe/bcmlrNET
 BugReports: https://github.com/YuhuiChloe/bcmlrNET/issues
