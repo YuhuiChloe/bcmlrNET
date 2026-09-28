@@ -5,7 +5,7 @@
 #' when the selected number is positive.
 #' @inheritParams bcmlrNET
 #' @param max_num_cp Positive integer number of changepoints in the initial fit.
-#' @param threshold AUC lower-bound threshold in [0, 1]. Support requires a
+#' @param threshold AUC lower-bound threshold in `[0, 1]`. Support requires a
 #'   strict exceedance of this value.
 #' @param warn_small_auc Warn about unavailable intervals associated with
 #'   fewer than two evaluation observations in a neighboring segment? This
