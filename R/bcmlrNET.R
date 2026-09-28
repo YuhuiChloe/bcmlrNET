@@ -1,353 +1,66 @@
-library(Rcpp)
-library(RcppArmadillo)
-library(BayesLogit) # for rpg()
-library(LearnBayes) # for computing inverse gamma: rigamma(), alternative to 1/rgamma()
-library(MASS) # for mvrnorm()
-library(pROC) # for ROC curves and AUC values
-library(DirichletReg)
-
-
-Rcpp::sourceCpp(code = '
-#include <RcppArmadillo.h>
-using namespace Rcpp;
-
-// [[Rcpp::depends(RcppArmadillo)]]
-
-inline double plogis_stable_cpp(const double x) {
-  if (x >= 0.0) {
-    double e = std::exp(-x);
-    return 1.0 / (1.0 + e);
-  } else {
-    double e = std::exp(x);
-    return e / (1.0 + e);
-  }
-}
-
-// [[Rcpp::export]]
-arma::vec compute_Q_vec_cube_cpp(const arma::cube& A,
-                                 const arma::mat& U_k,
-                                 const arma::vec& lambda_k) {
-  const int TT = A.n_slices;
-  arma::vec Q(TT, arma::fill::zeros);
-  arma::mat U_lambda = U_k.each_row() % lambda_k.t();
-
-  for (int t = 0; t < TT; ++t) {
-    arma::mat R_t = A.slice(t) * U_lambda;
-    Q[t] = 0.5 * arma::accu(U_k % R_t);
-  }
-  return Q;
-}
-
-// [[Rcpp::export]]
-Rcpp::List update_class_cpp(const arma::cube& A,
-                            arma::mat U_k,
-                            arma::ivec Z_k,
-                            arma::vec W_k,
-                            const arma::vec& lambda_k,
-                            const arma::vec& StBk,
-                            const arma::vec& c_k,
-                            const arma::vec& delta_k,
-                            const arma::vec& omega_k,
-                            const double tau_sq,
-                            const double a_w,
-                            const double b_w,
-                            const bool use_spike_slab) {
-  const int n  = U_k.n_rows;
-  const int D  = U_k.n_cols;
-  const int TT = A.n_slices;
-
-  std::vector<arma::mat> AU_list(TT);
-  arma::mat q_k(TT, D, arma::fill::zeros);
-  arma::vec Q_cache(TT, arma::fill::zeros);
-
-  const arma::mat I_D = arma::eye(D, D);
-  const double prior_prec = 1.0 / tau_sq;
-  const double log_tau_sq = std::log(tau_sq);
-
-  for (int t = 0; t < TT; ++t) {
-    AU_list[t] = A.slice(t) * U_k;
-    q_k.row(t) = 0.5 * arma::sum(U_k % AU_list[t], 0);
-  }
-  Q_cache = q_k * lambda_k;
-
-  for (int i = 0; i < n; ++i) {
-    arma::rowvec old_u = U_k.row(i);
-    arma::mat H_ik(D, D, arma::fill::zeros);
-    arma::vec g_ik(D, arma::fill::zeros);
-
-    for (int t = 0; t < TT; ++t) {
-      arma::rowvec r_tik = AU_list[t].row(i) % lambda_k.t();
-      double b_tik = Q_cache[t] - arma::dot(old_u, r_tik) + StBk[t] - c_k[t];
-      H_ik += omega_k[t] * (r_tik.t() * r_tik);
-      g_ik += r_tik.t() * (delta_k[t] - b_tik * omega_k[t]);
-    }
-
-    arma::mat M_ik = H_ik + prior_prec * I_D; 
-    arma::mat Uchol_M;
-    bool chol_ok = arma::chol(Uchol_M, M_ik, "upper"); // explicit Cholesky status check.
-    if (!chol_ok) {
-      Rcpp::stop("Cholesky failed in update_class_cpp for the A-block U update."); 
-    }
-    arma::vec Minv_g =
-      arma::solve(arma::trimatu(Uchol_M),
-                  arma::solve(arma::trimatl(Uchol_M.t()), g_ik));
-
-    int z_new = 1;
-    if (use_spike_slab) {
-      double logdet_M = 2.0 * arma::sum(arma::log(Uchol_M.diag()));
-      double w_i = std::min(std::max(W_k[i], 1.0e-12), 1.0 - 1.0e-12); // avoid log(0) in spike/slab odds.
-
-      double logW0 = std::log(w_i); 
-      double logW1 = std::log(1.0 - w_i) - 
-        0.5 * static_cast<double>(D) * log_tau_sq -
-        0.5 * logdet_M +
-        0.5 * arma::dot(g_ik, Minv_g);
-
-      z_new = static_cast<int>(R::rbinom(1.0, plogis_stable_cpp(logW1 - logW0)));
-    }
-    Z_k[i] = z_new;
-
-    arma::rowvec new_u(D, arma::fill::zeros);
-    if (!use_spike_slab || z_new == 1) {
-      arma::vec z_std(D);
-      for (int d = 0; d < D; ++d) z_std[d] = R::rnorm(0.0, 1.0);
-      new_u = (Minv_g + arma::solve(arma::trimatu(Uchol_M), z_std)).t();
-    }
-
-    arma::rowvec delta_u = new_u - old_u;
-    U_k.row(i) = new_u;
-
-    if (arma::accu(delta_u % delta_u) > 0.0) {
-      for (int t = 0; t < TT; ++t) {
-        arma::rowvec row_i_AU = AU_list[t].row(i);
-        arma::rowvec dq = delta_u % row_i_AU;
-        q_k.row(t) += dq;
-        Q_cache[t] += arma::dot(lambda_k.t(), dq);
-        AU_list[t] += A.slice(t).col(i) * delta_u;
-      }
-    }
-
-    if (use_spike_slab) {
-      W_k[i] = R::rbeta(a_w + 1.0 - static_cast<double>(Z_k[i]),
-                        b_w + static_cast<double>(Z_k[i]));
-    } else {
-      W_k[i] = 0.0;
-    }
-  }
-
-  return Rcpp::List::create(
-    Rcpp::Named("U") = U_k,
-    Rcpp::Named("Z") = Z_k,
-    Rcpp::Named("W") = W_k,
-    Rcpp::Named("q") = q_k,
-    Rcpp::Named("Q") = Q_cache
-  );
-}
-
-// ============================================================
-// Cached class update for the R/C++ implementation.
-// This keeps AU = A_t * U_k, q_k, and Q_k inside C++ across
-// calls using an external pointer.  The goal is to avoid
-// rebuilding the large AU cache for every Spike_Slab class update.
-// ============================================================
-
-struct BcmlrClassCache {
-  arma::cube AU;  // n x D x TT, AU.slice(t) = A.slice(t) * U_k
-  arma::mat q;   // TT x D, q[t,d] = 0.5 * sum_i U[i,d] * AU[i,d,t]
-  arma::vec Q;   // TT, Q = q * lambda_k
-};
-
-inline void rebuild_class_cache_inplace(BcmlrClassCache* cache,
-                                        const arma::cube& A,
-                                        const arma::mat& U_k,
-                                        const arma::vec& lambda_k) {
-  const int n  = U_k.n_rows;
-  const int D  = U_k.n_cols;
-  const int TT = A.n_slices;
-
-  cache->AU.set_size(n, D, TT);
-  cache->q.set_size(TT, D);
-  cache->q.zeros();
-
-  for (int t = 0; t < TT; ++t) {
-    cache->AU.slice(t) = A.slice(t) * U_k;
-    cache->q.row(t) = 0.5 * arma::sum(U_k % cache->AU.slice(t), 0);
-  }
-
-  cache->Q = cache->q * lambda_k;
-}
-
-// [[Rcpp::export]]
-SEXP make_class_cache_xptr_cpp(const arma::cube& A,
-                               const arma::mat& U_k,
-                               const arma::vec& lambda_k) {
-  BcmlrClassCache* cache = new BcmlrClassCache();
-  rebuild_class_cache_inplace(cache, A, U_k, lambda_k);
-  Rcpp::XPtr<BcmlrClassCache> ptr(cache, true);
-  return ptr;
-}
-
-// [[Rcpp::export]]
-arma::vec get_class_cache_Q_cpp(SEXP cache_sexp) {
-  Rcpp::XPtr<BcmlrClassCache> cache(cache_sexp);
-  return cache->Q;
-}
-
-// [[Rcpp::export]]
-arma::mat get_class_cache_q_cpp(SEXP cache_sexp) {
-  Rcpp::XPtr<BcmlrClassCache> cache(cache_sexp);
-  return cache->q;
-}
-
-// [[Rcpp::export]]
-void set_class_cache_Q_cpp(SEXP cache_sexp,
-                           const arma::vec& Q_new) {
-  Rcpp::XPtr<BcmlrClassCache> cache(cache_sexp);
-  if (cache->Q.n_elem != Q_new.n_elem) {
-    Rcpp::stop("set_class_cache_Q_cpp: Q_new has incompatible length.");
-  }
-  cache->Q = Q_new;
-}
-
-// Optional exact rebuild. Use only for debugging or occasional drift checks.
-// Do not call every iteration if speed is the goal.
-// [[Rcpp::export]]
-void rebuild_class_cache_xptr_cpp(SEXP cache_sexp,
-                                  const arma::cube& A,
-                                  const arma::mat& U_k,
-                                  const arma::vec& lambda_k) {
-  Rcpp::XPtr<BcmlrClassCache> cache(cache_sexp);
-  rebuild_class_cache_inplace(cache.get(), A, U_k, lambda_k);
-}
-
-// [[Rcpp::export]]
-Rcpp::List update_class_spikeslab_cached_xptr_cpp(const arma::cube& A,
-                                                  arma::mat U_k,
-                                                  arma::ivec Z_k,
-                                                  arma::vec W_k,
-                                                  const arma::vec& lambda_k,
-                                                  const arma::vec& StBk,
-                                                  const arma::vec& c_k,
-                                                  const arma::vec& delta_k,
-                                                  const arma::vec& omega_k,
-                                                  const double tau_sq,
-                                                  const double a_w,
-                                                  const double b_w,
-                                                  const bool use_spike_slab,
-                                                  SEXP cache_sexp) {
-  const int n  = U_k.n_rows;
-  const int D  = U_k.n_cols;
-  const int TT = A.n_slices;
-
-  Rcpp::XPtr<BcmlrClassCache> cache(cache_sexp);
-
-  // Rebuild only if dimensions are inconsistent. This should not happen in a
-  // normal run, but it protects the external pointer path from stale cache shape.
-  if (cache->AU.n_rows != static_cast<arma::uword>(n) ||
-      cache->AU.n_cols != static_cast<arma::uword>(D) ||
-      cache->AU.n_slices != static_cast<arma::uword>(TT) ||
-      cache->q.n_rows != static_cast<arma::uword>(TT) ||
-      cache->q.n_cols != static_cast<arma::uword>(D) ||
-      cache->Q.n_elem != static_cast<arma::uword>(TT)) {
-    rebuild_class_cache_inplace(cache.get(), A, U_k, lambda_k);
-  }
-
-  arma::cube& AU_cube = cache->AU;
-  arma::mat& q_k = cache->q;
-  arma::vec& Q_cache = cache->Q;
-
-  const arma::mat I_D = arma::eye(D, D);
-  const double prior_prec = 1.0 / tau_sq;
-  const double log_tau_sq = std::log(tau_sq);
-  const arma::rowvec lambda_row = lambda_k.t();
-
-  for (int i = 0; i < n; ++i) {
-    arma::rowvec old_u = U_k.row(i);
-    arma::mat H_ik(D, D, arma::fill::zeros);
-    arma::vec g_ik(D, arma::fill::zeros);
-
-    for (int t = 0; t < TT; ++t) {
-      arma::rowvec r_tik = AU_cube.slice(t).row(i) % lambda_row;
-      double b_tik = Q_cache[t] - arma::dot(old_u, r_tik) + StBk[t] - c_k[t];
-
-      H_ik += omega_k[t] * (r_tik.t() * r_tik);
-      g_ik += r_tik.t() * (delta_k[t] - b_tik * omega_k[t]);
-    }
-
-    if (!H_ik.is_finite() || !g_ik.is_finite()) {
-      Rcpp::stop("Non-finite H_ik or g_ik in update_class_spikeslab_cached_xptr_cpp.");
-    }
-
-    arma::mat M_ik = H_ik + prior_prec * I_D;
-    arma::mat Uchol_M;
-
-    bool chol_ok = arma::chol(Uchol_M, M_ik, "upper");
-    if (!chol_ok) {
-      Rcpp::stop("Cholesky failed in update_class_spikeslab_cached_xptr_cpp.");
-    }
-
-    arma::vec Minv_g =
-      arma::solve(arma::trimatu(Uchol_M),
-                  arma::solve(arma::trimatl(Uchol_M.t()), g_ik));
-
-    int z_new = 1;
-    if (use_spike_slab) {
-      double logdet_M = 2.0 * arma::sum(arma::log(Uchol_M.diag()));
-      double w_i = std::min(std::max(W_k[i], 1.0e-12), 1.0 - 1.0e-12);
-
-      double logW0 = std::log(w_i);
-      double logW1 = std::log(1.0 - w_i) -
-        0.5 * static_cast<double>(D) * log_tau_sq -
-        0.5 * logdet_M +
-        0.5 * arma::dot(g_ik, Minv_g);
-
-      z_new = static_cast<int>(R::rbinom(1.0, plogis_stable_cpp(logW1 - logW0)));
-    }
-    Z_k[i] = z_new;
-
-    arma::rowvec new_u(D, arma::fill::zeros);
-    if (!use_spike_slab || z_new == 1) {
-      arma::vec z_std(D);
-      for (int d = 0; d < D; ++d) z_std[d] = R::rnorm(0.0, 1.0);
-      new_u = (Minv_g + arma::solve(arma::trimatu(Uchol_M), z_std)).t();
-    }
-
-    arma::rowvec delta_u = new_u - old_u;
-    U_k.row(i) = new_u;
-
-    if (arma::accu(delta_u % delta_u) > 0.0) {
-      for (int t = 0; t < TT; ++t) {
-        arma::rowvec row_i_AU = AU_cube.slice(t).row(i);
-        arma::rowvec dq = delta_u % row_i_AU;
-
-        q_k.row(t) += dq;
-        Q_cache[t] += arma::dot(lambda_row, dq);
-
-        // Rank-one cache update:
-        // A_t * U_new = A_t * U_old + A_t[,i] * delta_u.
-        AU_cube.slice(t) += A.slice(t).col(i) * delta_u;
-      }
-    }
-
-    if (use_spike_slab) {
-      W_k[i] = R::rbeta(a_w + 1.0 - static_cast<double>(Z_k[i]),
-                        b_w + static_cast<double>(Z_k[i]));
-    } else {
-      W_k[i] = 0.0;
-    }
-  }
-
-  return Rcpp::List::create(
-    Rcpp::Named("U") = U_k,
-    Rcpp::Named("Z") = Z_k,
-    Rcpp::Named("W") = W_k,
-    Rcpp::Named("q") = q_k,
-    Rcpp::Named("Q") = Q_cache
-  );
-}
-
-')
-
+#' Fit changepoints in a dynamic network sequence
+#'
+#' Fit the generalized Bayesian model conditional on a positive number of
+#' changepoints. C++ routines accelerate the network-parameter updates.
+#'
+#' @param A List of equally sized, finite, symmetric adjacency matrices with
+#'   zero diagonals, in chronological order. Supply A, S, or both.
+#' @param S Optional numeric matrix (or all-numeric data frame) with one row
+#'   per observation and one column per network statistic.
+#' @param num_CP Positive integer number of fitted changepoints. Zero is not
+#'   a supported direct fit; use [bcmlrNET_model_select()] for selection.
+#' @param latent_dim Number of latent dimensions per node.
+#' @param eta_dir Finite exponent in the dimension-specific Dirichlet prior.
+#' @param b_tau Positive inverse-gamma scale for the shared latent variance.
+#' @param prior_kappa Either `"default"` (the segment-length prior) or a function
+#'   returning a finite nonnegative prior mass for a changepoint vector.
+#' @param alpha_f Significance level for AUC confidence intervals during selection.
+#' @param min_size Nonnegative segment-spacing parameter. The existing candidate
+#'   bounds require more than `min_size` observations per training segment.
+#'   When `thinning > 1`, the working value is
+#'   `round(min_size * (1 - 1/thinning))`. Changepoints index the last observation
+#'   in the preceding segment. This is not an exact original-time minimum after
+#'   holding observations out.
+#' @param sd_beta Positive prior variance (not standard deviation) for each
+#'   network-statistic coefficient. The historical argument name is retained.
+#' @param thinning Positive integer holdout spacing, not posterior-sample
+#'   thinning. Values above one hold out every `thinning`-th observation.
+#'   With one, all observations are used for fitting and evaluation.
+#' @param num_iter Total Gibbs iterations, including warmup.
+#' @param num_warmup Number of initial iterations discarded.
+#' @param print_outputs Print the structure of the returned list?
+#' @param print_progress Display a progress bar?
+#' @param model_selection Compute AUC confidence-interval lower bounds for
+#'   neighboring-segment comparisons? Usually set by the selection wrapper.
+#' @param prior_for_U Prior for latent node parameters: `"Gaussian"` or
+#'   `"Spike_Slab"`. This direct-fitting function defaults to `"Gaussian"`.
+#' @param sparse_networks Use Matrix objects during preprocessing? The current
+#'   C++ implementation still receives a dense adjacency cube.
+#' @param center_std_A Center and standardize dyads using fitting observations?
+#' @param seed Optional integer seed passed to `set.seed()`.
+#' @param lambda_init Latent-weight initialization: `"equal"`, `"prior"`, or `"zero"`.
+#' @returns A list containing posterior samples `Kappa`, `Beta`, `U`, `Lambda`,
+#'   `Z`, `W`, `pi`, `tau_sq`, and point estimates `Kappa_mode` (marginal
+#'   posterior modes). `AUC`, when requested, contains confidence-interval
+#'   lower bounds, not AUC point estimates. The number of retained samples is
+#'   `num_iter - num_warmup`. `Kappa` is a vector for one changepoint and a
+#'   samples-by-changepoints matrix otherwise; indices use the original series.
+#'   `Beta` is samples-by-statistics-by-segments; `U` is
+#'   samples-by-segments-by-nodes-by-latent-dimensions; `Lambda` is
+#'   samples-by-segments-by-latent-dimensions. `Z` and `W` are
+#'   samples-by-nodes-by-segments; `pi` is samples-by-latent-dimensions-by-three.
+#' @details Segment-indexed samples are returned in chronological order. For
+#'   one changepoint the first segment (`Y = 0`) is the reference; for multiple
+#'   changepoints the last segment is the reference. Reference-slot `W` values
+#'   are unused zero placeholders, not estimated probabilities. Posterior
+#'   samples from absent network or statistic blocks are placeholders too.
+#'   Separate marginal changepoint modes need not form a valid joint partition.
+#'   The original rounded initializer and segment bounds are retained; an
+#'   inadmissible initialization stops rather than silently changing settings.
+#' @seealso [bcmlrNET_model_select()], [plot_changepoints()]
+#' @export
+# C++ code lives in src/bcmlrNET.cpp; sourceCpp/library calls removed.
+# BayesLogit, LearnBayes and MASS calls use explicit namespaces.
 bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1, 
                     prior_kappa = "default", alpha_f = 0.1, 
                     min_size = 30, sd_beta = 3, thinning = 1, 
@@ -817,7 +530,8 @@ bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b
   #===============================#
   # Initialize working quantities ####
   #===============================#
-  tau_sq = rigamma(n = 1, a = a_tau, b = b_tau) # inverse gamma variable
+  # Explicit dependency namespace for installed-package use.
+  tau_sq = LearnBayes::rigamma(n = 1, a = a_tau, b = b_tau) # inverse gamma variable
   Z = matrix(0, nrow = n, ncol = K) # Bernoulli variables
   Z[,K] = rep(0, n)
   U = array(0, dim = c(K, n, D)) # latent variables
@@ -825,7 +539,8 @@ bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b
     for (i in 1:n){
       for (k in 1:(K-1)){
         Z[i,k] = 1
-        U[k,i,] = mvrnorm(n =1, mu = rep(0,D), Sigma = tau_sq*diag(D))
+        # Explicit dependency namespace for installed-package use.
+        U[k,i,] = MASS::mvrnorm(n =1, mu = rep(0,D), Sigma = tau_sq*diag(D))
       }
     }
     W = matrix(0, nrow = n, ncol = K) # Beta variables are unused under the Gaussian prior for U
@@ -835,7 +550,8 @@ bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b
     for (i in 1:n){
       for (k in 1:(K-1)){
         if (Z[i,k] ==1){
-          U[k,i,] = mvrnorm(n =1, mu = rep(0,D), Sigma = tau_sq*diag(D))
+          # Explicit dependency namespace for installed-package use.
+          U[k,i,] = MASS::mvrnorm(n =1, mu = rep(0,D), Sigma = tau_sq*diag(D))
         }else if(Z[i,k] ==0){
           U[k,i,] = rep(0,D)
         }
@@ -968,7 +684,8 @@ bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b
       #============================#
       # Update PG variables, omega ####
       #============================#
-      omega[,k] = rpg(num = Tt, h = 1, z = eta_k) # update omega using BayesLogit::rpg
+      # Explicit dependency namespace for installed-package use.
+      omega[,k] = BayesLogit::rpg(num = Tt, h = 1, z = eta_k) # update omega using BayesLogit::rpg
       # (The current loop is for class k.)
       U_k = matrix(U[k,,], nrow = n, ncol = D)
       Lambda_k = Lambda[k,]
@@ -1107,7 +824,8 @@ bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b
         sum_m_k = n * (K-1)
       }
       sum_ss_k = sum(U[1:(K-1), , , drop = FALSE]^2)
-      tau_sq = rigamma(n = 1, a = a_tau + (D/2) *sum_m_k, b = b_tau + 0.5*sum_ss_k)
+      # Explicit dependency namespace for installed-package use.
+      tau_sq = LearnBayes::rigamma(n = 1, a = a_tau + (D/2) *sum_m_k, b = b_tau + 0.5*sum_ss_k)
     }else{
       # If A is NULL, keep pi and tau_sq fixed at zero.
       pi = matrix(0, nrow = D, ncol = 3) # keep the same dimension-specific pi shape when A is absent.
