@@ -1,17 +1,39 @@
-# Select the number of changepoints using AUC confidence-interval lower bounds.
-# Refit on the full series when the selected number is positive.
-#
-# Selection outputs:
-#   num_cp       : selected number (posterior mode) of changepoints.
-#   max_cps      : the number of changepoint point estimates from the initial fit.
-#   num_cp_dist  : posterior samples used to select the number of changepoints.
-#   probs_num_cp : probabilities for 0, ..., max_num_cp changepoints.
-#   auc_diagnostics : first-stage AUC availability summaries (see below).
-# A positive num_cp also returns the full-series fit from bcmlrNET().
-# With num_cp = 0, only the selection outputs above are returned.
-#
-# warn_small_auc controls the small-group warning only. Diagnostics are always
-# returned; other interval failures still warn, and all-unavailable AUCs stop.
+#' Select the number of network changepoints and refit
+#'
+#' Fit a fixed initial number of changepoints, assess neighboring segments
+#' using AUC confidence-interval lower bounds, and refit on the full series
+#' when the selected number is positive.
+#' @inheritParams bcmlrNET
+#' @param max_num_cp Positive integer number of changepoints in the initial fit.
+#' @param threshold AUC lower-bound threshold in [0, 1]. Support requires a
+#'   strict exceedance of this value.
+#' @param warn_small_auc Warn about unavailable intervals associated with
+#'   fewer than two evaluation observations in a neighboring segment? This
+#'   flag does not change calculations or suppress warnings for other failures.
+#' @param prior_for_U Latent-node prior. This wrapper defaults to `"Spike_Slab"`.
+#' @returns A list with `num_cp` (selected number), `max_cps` (initial-fit
+#'   marginal changepoint modes), `num_cp_dist` (posterior samples of the number
+#'   of fitted changepoints that appear to correspond to true changepoints),
+#'   `probs_num_cp` (probabilities for zero through `max_num_cp`), and
+#'   `auc_diagnostics`. When `num_cp > 0`, the list also contains the full-series
+#'   refit returned by [bcmlrNET()]. For zero, no location or coefficient fit
+#'   is returned.
+#' @details Each diagnostic row describes a changepoint in the initial fit,
+#'   not in the final refit. `fitted_changepoint` is its chronological position;
+#'   `n_evaluations` is the number of retained posterior samples;
+#'   `n_unavailable` counts unavailable intervals; `pct_unavailable` is the
+#'   corresponding percentage (0--100). `n_unavailable_limited_samples` counts
+#'   unavailable intervals with fewer than two evaluation observations in a
+#'   neighboring segment; `n_unavailable_other` counts the remaining failures.
+#'   These last two columns sum to `n_unavailable`. Unavailable intervals set
+#'   that comparison's support indicator to zero, while retaining the posterior
+#'   sample. This is not evidence that a change is absent. All-unavailable
+#'   intervals stop selection. A tie for the selected number is resolved in
+#'   favor of the smallest tied number. The same supplied seed is used for
+#'   the initial fit and the refit; they are separate runs, not independent
+#'   random-number streams. Diagnostics measure availability, not convergence.
+#' @seealso [bcmlrNET()], [plot_histogram()]
+#' @export
 bcmlrNET_model_select <- function(
     A = NULL, S = NULL, latent_dim = 10, eta_dir = 1.5, b_tau = 1,
     thinning = 5, prior_kappa = "default", alpha_f = 0.1,
@@ -147,9 +169,9 @@ bcmlrNET_model_select <- function(
   n_eval <- cumulative_eval[, -1, drop = FALSE] -
     cumulative_eval[, -ncol(cumulative_eval), drop = FALSE]
 
-  # Each comparison uses two neighboring segments. Limited samples means
-  # fewer than two evaluation observations in at least one segment.
-  # With thinning = 1, all observations are used for evaluation.
+  # Each comparison uses two neighboring segments. Limited samples means fewer
+  # than two evaluation observations. With thinning = 1, all observations
+  # are used for evaluation; otherwise indices divisible by thinning are used.
   small_group <- n_eval[, -ncol(n_eval), drop = FALSE] < 2 |
     n_eval[, -1, drop = FALSE] < 2
 
@@ -166,6 +188,7 @@ bcmlrNET_model_select <- function(
     n_unavailable_other = colSums(!valid_auc & !small_group)
   )
 
+  # Explain the diagnostic categories in ordinary language.
   if (sum(auc_diagnostics$n_unavailable_other) > 0L) {
     warning(
       "Some AUC intervals are unavailable despite at least two evaluation ",
