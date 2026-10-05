@@ -61,7 +61,7 @@
 #' @export
 # C++ code lives in src/bcmlrNET.cpp; sourceCpp/library calls removed.
 # BayesLogit, LearnBayes and MASS calls use explicit namespaces.
-bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b_tau = 1, 
+bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 10, eta_dir = 1.5, b_tau = 1, 
                     prior_kappa = "default", alpha_f = 0.1, 
                     min_size = 30, sd_beta = 3, thinning = 1, 
                     num_iter = 5000, num_warmup = 2500, print_outputs = FALSE, 
