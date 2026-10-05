@@ -66,7 +66,7 @@ bcmlrNET = function(A = NULL, S = NULL, num_CP, latent_dim = 5, eta_dir = 1.5, b
                     min_size = 30, sd_beta = 3, thinning = 1, 
                     num_iter = 5000, num_warmup = 2500, print_outputs = FALSE, 
                     print_progress = FALSE, model_selection = FALSE,
-                    prior_for_U = c("Gaussian", "Spike_Slab"), sparse_networks = FALSE, 
+                    prior_for_U = c("Spike_Slab", "Gaussian"), sparse_networks = FALSE, 
                     center_std_A = TRUE, seed  = NULL,
                     lambda_init = c("equal", "prior", "zero")){
   
