@@ -35,8 +35,8 @@
 #' @seealso [bcmlrNET()], [plot_histogram()]
 #' @export
 bcmlrNET_model_select <- function(
-    A = NULL, S = NULL, latent_dim = 10, eta_dir = 1.5, b_tau = 1,
-    thinning = 5, prior_kappa = "default", alpha_f = 0.1,
+    A = NULL, S = NULL, latent_dim = 10, eta_dir = 1.01, b_tau = 0.5,
+    thinning = 5, prior_kappa = "default", alpha_f = 0.05,
     threshold = 0.5, min_size = 30, max_num_cp = 5, sd_beta = 3,
     num_iter = 5000, num_warmup = 2500,
     print_progress = FALSE, print_outputs = FALSE,
