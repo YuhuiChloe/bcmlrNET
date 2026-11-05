@@ -1,0 +1,35 @@
+#' Weekly POLECAT international-conflict networks
+#'
+#' Prepared inputs for the POLECAT application in the bcmlrNET dissertation
+#' examples. The series contains 184 non-overlapping weekly networks on the same
+#' 197 countries, from the week December 21--27, 2020 through June 24--30, 2024.
+#'
+#' @format A named list with four components:
+#' \describe{
+#'   \item{A_list}{A list of 184 numeric 197 by 197 adjacency matrices.
+#'     Matrices are binary and symmetric, with zero diagonals.}
+#'   \item{node_labels}{A character vector of 197 country names, in the row
+#'     and column order of every adjacency matrix.}
+#'   \item{time_labels}{A character vector of 184 weekly interval labels in
+#'     chronological order, formatted as YYYY-MM-DD/YYYY-MM-DD.}
+#'   \item{date_list}{A Date vector of 184 week-start dates, aligned with
+#'     A_list and time_labels.}
+#' }
+#' @details An edge indicates at least one reported material-conflict event
+#'   between two countries in the corresponding week. The supplied network and
+#'   country order are retained. Network statistics are calculated separately
+#'   using [compute_netstats()]. The file data-raw/POLECAT.R in the source
+#'   repository records how the three supplied input files are combined.
+#' @source Weekly network subset prepared by Joshua Daniel Loyal from POLECAT
+#'   political event data coded using the PLOVER event ontology, as described
+#'   in the dissertation's POLECAT application. Input files:
+#'   polecat_weekly_subset.gz, node_names.npy, and map_week.csv.
+#'   Background: \url{https://andrewhalterman.com/publication/plover-polecat-new-event-data/}.
+#' @examples
+#' data("POLECAT", package = "bcmlrNET")
+#' length(POLECAT$A_list)
+#' dim(POLECAT$A_list[[1]])
+#' head(POLECAT$node_labels)
+#' range(POLECAT$date_list)
+#' @keywords datasets
+"POLECAT"
