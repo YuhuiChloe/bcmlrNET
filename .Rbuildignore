@@ -13,4 +13,3 @@
 ^README\.md$
 ^.*\.Rcheck$
 ^bcmlrNET_.*\.(tar\.gz|zip)$
-^data-raw$
