@@ -240,6 +240,7 @@ them during the corresponding week.
 The analysis examines when communication patterns change and which employees
 and employee pairs are most involved in the detected changes.
 
+See [Example_code.R](Example_code.R) for the Enron fitting and plotting workflow.
 
 ### POLECAT: changes in international conflict networks
 
@@ -275,10 +276,6 @@ For a reproducible run, use the same data version, preprocessing steps,
 software versions, and computational settings. Record the package release or
 commit, the random seed, and the R session information. A seed alone does not
 guarantee identical numerical results across different computing environments.
-
-The prepared POLECAT inputs are included with the package.
-[Example_code.R](Example_code.R) follows the dissertation workflow; its full
-MCMC settings can take substantially longer than a short software test.
 
 ## Related work and attribution
 
