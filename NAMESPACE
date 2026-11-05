@@ -1,4 +1,4 @@
-# Draft namespace. Regenerate with roxygen2 after preparing the package.
+# Package namespace. Keep synchronized with roxygen declarations in R/.
 useDynLib(bcmlrNET, .registration = TRUE)
 importFrom(Rcpp,evalCpp)
 importFrom(rlang,.data)
@@ -22,3 +22,4 @@ export(plot_B_diff_heatmaps)
 export(rank_nodes_by_Bdiff_L2)
 export(plot_node_involvement_L2)
 export(plot_changepoints)
+export(plot_netstats_cp_cis)
