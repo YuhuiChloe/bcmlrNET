@@ -13,7 +13,8 @@
 #' @returns Invisibly, a list with `l2_rank`, `active_nodes`, and `L2_mat`.
 #'   Draws a heatmap on the current base-graphics device.
 #' @details Uses [rank_nodes_by_Bdiff_L2()]. The original node ordering, colors,
-#'   margins, and graphics layout are retained.
+#'   and graphics layout are retained. The left margin expands when needed to fit
+#'   long node labels at the original text size.
 #' @examples
 #' d <- list(draws_upper = rbind(c(3, 4, 0), c(-3, -4, 0)), n = 3,
 #'           label = "B2 - B1")
@@ -105,6 +106,13 @@ plot_node_involvement_L2 = function(heat_out,
     cex.lab = 1.5,
     cex.main = 1.5
   )
+
+  # Reserve enough space for long country names at the existing axis text size.
+  plot_mai = graphics::par("mai")
+  plot_mai[2] = max(plot_mai[2], max(graphics::strwidth(
+    rownames(L2_mat), units = "inches", cex = 1.3, font = 1
+  )) + 0.2)
+  graphics::par(mai = plot_mai)
 
   graphics::image(
     x = seq_len(ncol(L2_mat)),
