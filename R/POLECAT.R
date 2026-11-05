@@ -18,8 +18,7 @@
 #' @details An edge indicates at least one reported material-conflict event
 #'   between two countries in the corresponding week. The supplied network and
 #'   country order are retained. Network statistics are calculated separately
-#'   using [compute_netstats()]. The file data-raw/POLECAT.R in the source
-#'   repository records how the three supplied input files are combined.
+#'   using [compute_netstats()].
 #' @source Weekly network subset prepared by Joshua Daniel Loyal from POLECAT
 #'   political event data coded using the PLOVER event ontology, as described
 #'   in the dissertation's POLECAT application. Input files:
