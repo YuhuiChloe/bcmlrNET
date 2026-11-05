@@ -36,8 +36,7 @@ examples. The series contains 184 non-overlapping weekly networks on the same
 An edge indicates at least one reported material-conflict event
 between two countries in the corresponding week. The supplied network and
 country order are retained. Network statistics are calculated separately
-using \code{\link[=compute_netstats]{compute_netstats()}}. The file data-raw/POLECAT.R in the source
-repository records how the three supplied input files are combined.
+using \code{\link[=compute_netstats]{compute_netstats()}}.
 }
 \examples{
 data("POLECAT", package = "bcmlrNET")
