@@ -13,9 +13,16 @@
 plot_netstats_paper <- function(S, network_stats = NULL, cp = NULL,
                                 title = NULL, shade_segments = TRUE,
                                 outfile = NULL, width = 7, height = 4.8, dpi = 600) {
-  S <- .bcmlr_matrix(S, "S")
+  if (is.data.frame(S) && all(vapply(S, is.numeric, logical(1)))) {
+    S <- as.matrix(S)
+  }
+  if (!is.matrix(S) || !is.numeric(S) || is.complex(S) ||
+      any(dim(S) < 1L) || any(!is.finite(S))) {
+    stop("S must be a nonempty finite numeric matrix or numeric data frame.")
+  }
   Tt <- nrow(S)
-  .bcmlr_flag(shade_segments, "shade_segments")
+  if (!is.logical(shade_segments) || length(shade_segments) != 1L ||
+      is.na(shade_segments)) stop("shade_segments must be TRUE or FALSE.")
   if (is.null(colnames(S))) colnames(S) <- paste0("Statistic ", seq_len(ncol(S)))
   if (anyDuplicated(colnames(S))) stop("S must have distinct column names.")
   if (is.null(network_stats)) network_stats <- colnames(S)
@@ -27,7 +34,10 @@ plot_netstats_paper <- function(S, network_stats = NULL, cp = NULL,
     stop("network_stats must contain distinct column names of S.")
   }
   if (length(cp)) {
-    .bcmlr_indices(cp, "cp", Tt - 1L)
+    if (!is.numeric(cp) || is.complex(cp) || any(!is.finite(cp)) ||
+        any(cp != floor(cp)) || any(cp < 1 | cp >= Tt)) {
+      stop("cp must contain integer indices in 1, ..., nrow(S) - 1.")
+    }
     cp <- sort(unique(cp))
   }
   S <- S[, network_stats, drop = FALSE]
