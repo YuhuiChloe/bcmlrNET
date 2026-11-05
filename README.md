@@ -41,6 +41,108 @@ avoid redundant calculations.
 Users fit models and generate visualizations through R without writing C++
 code. Building from source requires an R-compatible C++ toolchain.
 
+### Installation troubleshooting
+
+If `remotes::install_github()` fails with **HTTP error 401: Bad credentials**,
+GitHub has rejected the authentication credentials sent by the installation
+request. A common cause is an invalid, expired, or revoked personal access
+token (PAT) saved in the user's R/Git environment. This error occurs before
+the package is downloaded and compiled; changing the package's R or C++
+functions will not resolve it.
+
+`bcmlrNET` is public. Users can either update their saved credentials or
+install from the public ZIP archive without a token.
+
+#### Option 1: Replace the saved token
+
+[Create a new token in your own GitHub account](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens),
+then run these commands in an interactive R session:
+
+```r
+if (!requireNamespace("gitcreds", quietly = TRUE)) {
+  install.packages("gitcreds")
+}
+gitcreds::gitcreds_set(url = "https://github.com")
+```
+
+Choose **Replace these credentials** if prompted, and enter the new token.
+This updates the saved GitHub credential, which may also be used by other
+GitHub tools on your computer. Enter the token only at the prompt; do not
+put it in example scripts, README files, or issue reports. `gitcreds` requires
+Git to be installed.
+
+If you previously defined `GITHUB_PAT` or `GITHUB_TOKEN` in `.Renviron` or
+another startup file, remove or update the obsolete entry there as well.
+Otherwise, R may continue to use that token instead of the replacement in
+the credential store. These commands show only whether the variables are
+set and then clear them for the current R session:
+
+```r
+nzchar(Sys.getenv(c("GITHUB_PAT", "GITHUB_TOKEN")))
+Sys.unsetenv(c("GITHUB_PAT", "GITHUB_TOKEN"))
+```
+
+`Sys.unsetenv()` does not edit startup files. After correcting any saved
+settings, restart R/RStudio and retry installation:
+
+```r
+remotes::install_github(
+  "YuhuiChloe/bcmlrNET",
+  dependencies = NA,
+  force = TRUE,
+  upgrade = "never"
+)
+```
+
+See the [gitcreds documentation](https://gitcreds.r-lib.org/reference/gitcreds_get.html)
+for details about credential storage and environment variables.
+
+#### Option 2: Install from the public ZIP archive
+
+This method downloads the source archive directly and avoids the GitHub API
+authentication used by `install_github()`:
+
+```r
+remotes::install_url(
+  "https://github.com/YuhuiChloe/bcmlrNET/archive/refs/heads/main.zip",
+  dependencies = NA,
+  force = TRUE,
+  upgrade = "never"
+)
+```
+
+GitHub generates this ZIP from the `main` branch. R downloads and extracts
+it into temporary storage, then builds and installs the package. No manual
+download or token is required for this route, and the stored credentials
+are not changed.
+
+If R cannot download the archive, [download the ZIP in your browser](https://github.com/YuhuiChloe/bcmlrNET/archive/refs/heads/main.zip),
+then run the following and select the downloaded ZIP:
+
+```r
+remotes::install_local(
+  file.choose(),
+  dependencies = NA,
+  force = TRUE,
+  upgrade = "never"
+)
+```
+
+Both methods build the package from source and require the C++ toolchain
+described above. After installation succeeds, check that the package and
+both prepared datasets load:
+
+```r
+library(bcmlrNET)
+data("POLECAT", package = "bcmlrNET")
+data("Enron", package = "bcmlrNET")
+
+length(POLECAT$A_list)  # 184
+length(Enron$A_list)    # 100
+dim(Enron$A_list[[1]])  # 89 89
+```
+
+
 ## Input data
 
 The prepared POLECAT dataset supplies the networks and aligned country and
