@@ -27,7 +27,7 @@ individual nodes associated with each detected change.
 
 ## Installation
 
-Once the installable package is available, install it from GitHub with:
+Install the package from GitHub with:
 
 ```r
 install.packages("remotes")
@@ -42,6 +42,17 @@ Users fit models and generate visualizations through R without writing C++
 code. Building from source requires an R-compatible C++ toolchain.
 
 ## Input data
+
+The prepared POLECAT dataset supplies the networks and aligned country and
+weekly labels used in the dissertation example:
+
+```r
+data("POLECAT", package = "bcmlrNET")
+A_list <- POLECAT$A_list
+node_labels <- POLECAT$node_labels
+time_labels <- POLECAT$time_labels
+date_list <- POLECAT$date_list
+```
 
 Let `A_list` be a list of `T` adjacency matrices in chronological order. Each
 matrix has dimensions `n x n` and represents a network on the same `n` nodes.
@@ -207,6 +218,10 @@ The visualization functions cover complementary aspects of the analysis:
 | Which dyad-level coefficients change? | `plot_B_diff_heatmaps()` |
 | Which nodes have the largest row-wise coefficient changes? | `plot_node_involvement_L2()` |
 
+The optional competing-method panel in `plot_netstats_cp_cis()` requires
+`patchwork` (`install.packages("patchwork")`). Omit `other_cps`, or use
+`other_cps = list()`, when no competing methods are available.
+
 Node involvement is summarized using row-wise L2 norms of differences
 between coefficient matrices, calculated for each posterior sample. These summaries
 characterize changes associated with nodes; they do not establish causation.
@@ -225,7 +240,6 @@ them during the corresponding week.
 The analysis examines when communication patterns change and which employees
 and employee pairs are most involved in the detected changes.
 
-See the [Enron analysis script](analysis/Enron_networks.R) for the application workflow.
 
 ### POLECAT: changes in international conflict networks
 
@@ -244,7 +258,7 @@ The analysis examines when these conflict relations change and uses posterior
 summaries to characterize the countries and country pairs associated with
 the detected changes.
 
-See the [POLECAT analysis script](analysis/POLECAT_networks.R) for the application workflow.
+See [Example_code.R](Example_code.R) for the POLECAT fitting and plotting workflow.
 
 ## Reproduce an application
 
@@ -262,8 +276,9 @@ software versions, and computational settings. Record the package release or
 commit, the random seed, and the R session information. A seed alone does not
 guarantee identical numerical results across different computing environments.
 
-Data-access instructions and executable end-to-end reproduction scripts are
-planned for the package release.
+The prepared POLECAT inputs are included with the package.
+[Example_code.R](Example_code.R) follows the dissertation workflow; its full
+MCMC settings can take substantially longer than a short software test.
 
 ## Related work and attribution
 
